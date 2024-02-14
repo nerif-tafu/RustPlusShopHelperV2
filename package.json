@@ -2,11 +2,13 @@
   "name": "rustplusshophelpverv2",
   "version": "0.0.0",
   "scripts": {
-    "dev": "cross-env NODE_OPTIONS='--no-warnings' vite",
+    "devclient": "cross-env NODE_OPTIONS='--no-warnings' vite",
+    "devserver": "nodemon ./server/server.js",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@liamcottle/rustplus.js": "^2.4.0",
     "@mdi/font": "7.0.96",
     "roboto-fontface": "*",
     "socket.io": "^4.7.4",
