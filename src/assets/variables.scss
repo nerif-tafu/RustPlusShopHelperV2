@@ -1,0 +1,24 @@
+$bg-color: #151719;
+$container-bg-color: #1A1D20;
+$container-light-bg-color: #1F2225;
+$navbar-btn-color: #2C3034;
+$cell-bg-color: #231E29;
+$link-color: #9D7D99;
+$txt-color: #B1ADB3;
+$selected-color: #A673B1;
+
+
+.navbar-btn {
+  background-color: $navbar-btn-color;
+  color: $txt-color;
+  border-radius: 8px;
+  padding: 10px 20px;
+  
+  &:hover {
+    background-color: $container-light-bg-color;
+  }
+}
+
+.navbar {
+    background-color: $container-light-bg-color !important;
+}
