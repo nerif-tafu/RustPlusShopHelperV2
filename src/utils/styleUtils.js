@@ -56,6 +56,14 @@ export function useStyleUtils() {
     getInputStyle: () => ({
       backgroundColor: themeColors['cell-bg'],
       borderRadius: '4px',
-    })
+    }),
+
+    // Error style
+    getErrorStyle: () => {
+      return {
+        color: theme.global.current.value.colors.error,
+        fontFamily: theme.global.current.value.fontFamily
+      };
+    }
   };
 } 

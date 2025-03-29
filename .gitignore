@@ -132,3 +132,4 @@ rustplus.config.json
 server/RPData.json
 .ideas/*
 .ideas/
+server/data/*

@@ -42,6 +42,33 @@
       </div>
     </div>
 
+    <!-- Item Database Section -->
+    <div class="item-database-section mb-4" :style="getBoxStyle()">
+      <div class="pa-4">
+        <div class="d-flex justify-space-between align-center mb-2">
+          <div class="text-subtitle-1" :style="getTitleStyle()">
+            Item Database
+          </div>
+          <v-btn
+            color="primary"
+            size="small"
+            @click="updateItemDatabase"
+            :loading="isLoadingItemDatabase"
+            :style="getButtonStyle()"
+          >
+            <v-icon class="mr-1">mdi-refresh</v-icon>
+            Update
+          </v-btn>
+        </div>
+        <p class="text-body-2" :style="getNormalTextStyle()">
+          The item database helps identify items by name instead of ID numbers.
+          <span v-if="Object.keys(itemDatabase).length > 0">
+            Currently loaded {{ Object.keys(itemDatabase).length }} items.
+          </span>
+        </p>
+      </div>
+    </div>
+
     <!-- Connection Status Alert -->
     <v-alert
       v-if="!isConnected"
@@ -220,20 +247,59 @@
 
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
-import { useStyleUtils } from '@/utils/styleUtils';
 import { io } from 'socket.io-client';
 import axios from 'axios';
 import { useTheme } from 'vuetify';
+import itemDatabaseService from '@/services/itemDatabaseService';
 
-// Import shared style utilities
-const { 
-  getBoxStyle, 
-  getServerBoxStyle, 
-  getTitleStyle, 
-  getNormalTextStyle, 
-  getCaptionStyle, 
-  getButtonStyle 
-} = useStyleUtils();
+// Define style utilities directly in this component to fix issues
+const theme = useTheme();
+
+// Style utility functions
+const getTitleStyle = () => {
+  return {
+    color: theme.current.value.dark ? 'rgba(255, 255, 255, 0.87)' : 'rgba(0, 0, 0, 0.87)'
+  };
+};
+
+const getNormalTextStyle = () => {
+  return {
+    color: theme.current.value.dark ? 'rgba(255, 255, 255, 0.70)' : 'rgba(0, 0, 0, 0.70)'
+  };
+};
+
+const getCaptionStyle = () => {
+  return {
+    color: theme.current.value.dark ? 'rgba(255, 255, 255, 0.50)' : 'rgba(0, 0, 0, 0.50)'
+  };
+};
+
+const getBoxStyle = () => {
+  return {
+    backgroundColor: theme.current.value.dark ? 'rgba(30, 30, 30, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+    borderRadius: '8px',
+    border: theme.current.value.dark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.12)'
+  };
+};
+
+const getServerBoxStyle = () => {
+  return {
+    backgroundColor: theme.current.value.dark ? 'rgba(30, 30, 30, 0.7)' : 'rgba(255, 255, 255, 0.7)',
+    borderRadius: '8px',
+    border: theme.current.value.dark ? '1px solid rgba(255, 255, 255, 0.12)' : '1px solid rgba(0, 0, 0, 0.12)'
+  };
+};
+
+const getButtonStyle = () => {
+  return {}; // Default button style
+};
+
+const getSkeletonStyle = () => {
+  return {
+    backgroundColor: theme.current.value.dark ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)',
+    animation: 'pulse 1.5s infinite ease-in-out'
+  };
+};
 
 // State variables
 const shopPrefix = ref('');
@@ -241,6 +307,8 @@ const isLoading = ref(false);
 const isConnected = ref(false);
 const vendingMachines = ref([]);
 const allVendingMachines = ref([]);
+const itemDatabase = ref({});
+const isLoadingItemDatabase = ref(false);
 const rustplusStatus = ref({
   connected: false,
   lastConnected: null,
@@ -248,16 +316,6 @@ const rustplusStatus = ref({
   serverInfo: null
 });
 const socket = io();
-
-// Custom skeleton loader styling function
-const getSkeletonStyle = () => {
-  return {
-    backgroundColor: 'rgba(128, 128, 128, 0.1)',
-    opacity: 0.7,
-    animation: 'pulse 1.5s infinite ease-in-out',
-    borderRadius: '4px',
-  };
-};
 
 // Computed: Get vending machines that have the shop prefix in their name
 const myVendingMachines = computed(() => {
@@ -316,7 +374,7 @@ const refreshVendingMachines = async () => {
       
       // Filter for vending machines
       const vendingMachineMarkers = markers.filter(marker => 
-        marker.type === 3 || marker.type === "3" || marker.type === "VendingMachine"  // Accept both formats
+        marker.type === 3 || marker.type === "3" || marker.type === "VendingMachine"  // Handle both formats
       );
       console.log(`Found ${vendingMachineMarkers.length} vending machine markers`);
       
@@ -337,26 +395,24 @@ const refreshVendingMachines = async () => {
               // Not our machine and is selling the same item
               otherMachine.id !== machine.id && 
               otherMachine.sellOrders?.some(otherOrder => 
-                otherOrder.itemId === order.itemId &&
-                otherOrder.itemIsBlueprint === order.itemIsBlueprint &&
-                otherOrder.currencyId === order.currencyId &&
-                otherOrder.currencyIsBlueprint === order.currencyIsBlueprint
+                otherOrder.itemId === order.itemId && 
+                otherOrder.itemIsBlueprint === order.itemIsBlueprint
               )
             )
-            .flatMap(otherMachine => {
-              // Get the competing orders from this machine
-              const matchingOrders = otherMachine.sellOrders.filter(otherOrder => 
-                otherOrder.itemId === order.itemId &&
-                otherOrder.itemIsBlueprint === order.itemIsBlueprint &&
-                otherOrder.currencyId === order.currencyId &&
-                otherOrder.currencyIsBlueprint === order.currencyIsBlueprint
+            .flatMap(competitor => {
+              // Get the matching orders from this competitor
+              const matchingOrders = competitor.sellOrders.filter(otherOrder => 
+                otherOrder.itemId === order.itemId && 
+                otherOrder.itemIsBlueprint === order.itemIsBlueprint
               );
               
+              // Format for display
               return matchingOrders.map(matchingOrder => ({
-                shopName: otherMachine.name,
-                quantity: matchingOrder.quantity,
+                vendingMachineName: competitor.name,
                 price: matchingOrder.costPerItem,
-                location: { x: otherMachine.x, y: otherMachine.y },
+                currencyId: matchingOrder.currencyId,
+                currencyName: getItemNameFromDatabase(matchingOrder.currencyId),
+                quantity: matchingOrder.quantity,
                 isUndercutting: matchingOrder.costPerItem < order.costPerItem
               }));
             });
@@ -373,16 +429,20 @@ const refreshVendingMachines = async () => {
           
           return {
             ...order,
-            itemName: getItemName(order.itemId),
-            currencyName: getItemName(order.currencyId),
+            itemName: getItemNameFromDatabase(order.itemId),
+            currencyName: getItemNameFromDatabase(order.currencyId),
             competitors,
             undercutBy
           };
         });
         
+        // Check if any items are being undercut
+        const hasUndercutItems = sellOrders?.some(order => order.undercutBy > 0) || false;
+        
         return {
           ...machine,
-          sellOrders
+          sellOrders,
+          hasUndercutItems
         };
       });
       
@@ -395,6 +455,22 @@ const refreshVendingMachines = async () => {
   } finally {
     isLoading.value = false;
   }
+};
+
+// Helper function to get item name from the database
+const getItemNameFromDatabase = (itemId) => {
+  if (!itemId) return 'Unknown';
+  
+  // Convert to string if it's a number
+  const id = itemId.toString();
+  
+  // Check if we have this item in our database
+  if (itemDatabase.value[id]) {
+    return itemDatabase.value[id].name;
+  }
+  
+  // Fallback for items not in database
+  return `Item #${id}`;
 };
 
 // Helper function to get item name from ID (placeholder - you'd need a real item database)
@@ -443,6 +519,20 @@ onMounted(async () => {
     }
   });
   
+  // Listen for item database updates
+  socket.on('itemDatabaseProgress', (progress) => {
+    console.log('Item database update progress:', progress);
+  });
+  
+  socket.on('itemDatabaseUpdated', () => {
+    console.log('Item database updated');
+    loadItemDatabase();
+  });
+  
+  socket.on('itemDatabaseError', (error) => {
+    console.error('Item database update error:', error);
+  });
+  
   // Get initial RustPlus status
   try {
     const response = await axios.get('/api/rustplus/status');
@@ -458,6 +548,9 @@ onMounted(async () => {
   } catch (error) {
     console.error('Failed to get RustPlus status:', error);
   }
+  
+  // Load item database
+  loadItemDatabase();
 });
 
 // Log when response comes back to help debug
@@ -471,6 +564,78 @@ watch(allVendingMachines, (newValue) => {
     });
   }
 });
+
+// Load item database
+const loadItemDatabase = async () => {
+  try {
+    isLoadingItemDatabase.value = true;
+    // Load items using the service
+    const items = await itemDatabaseService.loadItems();
+    itemDatabase.value = items;
+    console.log(`Item database: ${Object.keys(items).length} items loaded`);
+    
+  } catch (error) {
+    console.error('Error loading item database:', error);
+  } finally {
+    isLoadingItemDatabase.value = false;
+  }
+};
+
+// Initiate database update
+const updateItemDatabase = async () => {
+  try {
+    await axios.post('/api/items/update');
+    // The actual update happens in the background, progress will be sent via socket
+  } catch (error) {
+    console.error('Error starting database update:', error);
+  }
+};
+
+// Function to get item details from the database
+const getItemDetails = async (itemId) => {
+  try {
+    const item = await itemDatabaseService.getItemById(itemId);
+    if (item) {
+      return {
+        name: item.name,
+        image: `/api/items/images/${itemId}.png`,
+        description: item.description || '',
+        category: item.category || '',
+        id: itemId
+      };
+    }
+    return null;
+  } catch (error) {
+    console.error(`Error getting item details for ${itemId}:`, error);
+    return null;
+  }
+};
+
+// Process vending machine sell orders to show proper item names
+const processSellOrders = async (machines) => {
+  // Process each vending machine's sell orders
+  for (const machine of machines) {
+    if (machine.sellOrders) {
+      // Enhance each sell order with item names
+      for (const order of machine.sellOrders) {
+        // Convert numeric IDs to strings if needed
+        const itemIdStr = order.itemId.toString();
+        const currencyIdStr = order.currencyId.toString();
+        
+        // Get item details from database
+        const itemDetails = await getItemDetails(itemIdStr);
+        const currencyDetails = await getItemDetails(currencyIdStr);
+        
+        // Set item name and image from our database if available
+        order.itemName = itemDetails?.name || `Item #${order.itemId}`;
+        order.itemImage = itemDetails?.image || null;
+        order.currencyName = currencyDetails?.name || `Item #${order.currencyId}`;
+        order.currencyImage = currencyDetails?.image || null;
+      }
+    }
+  }
+  return machines;
+};
 </script>
 
 <style scoped>

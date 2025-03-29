@@ -1,3 +1,17 @@
 {
-    "ignore": ["server/RPData.json", "vite.config.mjs*", "*.mjs", "node_modules/", "dist/", ".vite/"]
+    "ignore": [
+    "server/RPData.json", 
+    "server/data/**", 
+    "server/data/images/**/*",
+    "server/data/*.json",
+    "server/data/itemDatabase.json",
+    "server/data/cookies.json",
+    "vite.config.mjs*", 
+    "*.mjs", 
+    "node_modules/", 
+    "dist/", 
+    ".vite/",
+    "server/data/steamcmd/**",
+    "server/data/rustserver/**"
+    ]
 }

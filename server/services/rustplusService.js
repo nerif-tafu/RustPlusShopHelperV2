@@ -409,6 +409,36 @@ async function getMapMarkers() {
   });
 }
 
+/**
+ * Calculate undercutting prices for the given item IDs
+ * @param {string[]} itemIds - Array of item IDs to calculate prices for
+ * @returns {Array} - Array of suggestions
+ */
+async function calculateUndercutPrices(itemIds) {
+  // This is where you would implement your actual logic to check current prices
+  // and calculate the undercutting prices
+  
+  // For now, we're just returning example data
+  const suggestions = [];
+  
+  for (const itemId of itemIds) {
+    // In a real implementation, you'd query vending machines through Rust+
+    // or use cached data to determine current prices
+    
+    // Mock implementation
+    const currentPrice = Math.floor(Math.random() * 100) + 10; // Random price between 10-110
+    const suggestedPrice = Math.max(currentPrice - Math.ceil(currentPrice * 0.05), 1); // 5% less, minimum 1
+    
+    suggestions.push({
+      itemId,
+      currentPrice,
+      suggestedPrice
+    });
+  }
+  
+  return suggestions;
+}
+
 module.exports = {
   initializeRustPlus,
   getStatus,
@@ -416,5 +446,6 @@ module.exports = {
   getMap,
   sendTeamMessage,
   checkSubscription,
-  getMapMarkers
+  getMapMarkers,
+  calculateUndercutPrices
 }; 

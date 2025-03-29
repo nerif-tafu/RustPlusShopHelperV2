@@ -220,11 +220,78 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-  </div>
-</template>
-
-<script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+    
+    <!-- Item Database Status Section -->
+    <v-divider class="my-4"></v-divider>
+    <div class="database-status-section mb-4" :style="getBoxStyle()">
+      <div class="pa-4">
+        <div class="d-flex justify-space-between align-center mb-3">
+          <div class="text-h6" :style="getTitleStyle()">Item Database</div>
+          <v-btn
+            color="primary"
+            size="small"
+            @click="updateItemDatabase"
+            :loading="isUpdatingDatabase && progressInfo.progress !== 100"
+            :disabled="isUpdatingDatabase && progressInfo.progress !== 100"
+            :style="getButtonStyle()"
+          >
+            <v-icon class="mr-1">mdi-refresh</v-icon>
+            Update
+          </v-btn>
+        </div>
+        
+        <div class="mb-2 schedule-note">
+          <small :style="getCaptionStyle()">
+            <v-icon small>mdi-information-outline</v-icon>
+            Automatic updates occur on the first Thursday of each month at 8PM GMT
+          </small>
+        </div>
+        
+        <div v-if="databaseStatus.loading" class="text-center py-4">
+          <v-progress-circular indeterminate color="primary"></v-progress-circular>
+          <div class="mt-2">Loading database status...</div>
+        </div>
+        
+        <div v-else-if="databaseStatus.error" class="error-message pa-3" :style="getErrorStyle()">
+          {{ databaseStatus.error }}
+        </div>
+        
+        <div v-else class="database-info">
+          <div class="d-flex mb-2">
+            <v-icon class="mr-2">mdi-database</v-icon>
+            <span :style="getNormalTextStyle()">
+              <strong>Items:</strong> {{ databaseStatus.itemCount || 'No items' }}
+            </span>
+          </div>
+          
+          <div class="d-flex mb-2" v-if="databaseStatus.lastUpdated">
+            <v-icon class="mr-2">mdi-clock-outline</v-icon>
+            <span :style="getNormalTextStyle()">
+              <strong>Last Updated:</strong> {{ formatDate(databaseStatus.lastUpdated) }}
+            </span>
+          </div>
+          
+          <div v-if="progressInfo.active" class="progress-section mt-3">
+            <p class="text-body-2" :style="getNormalTextStyle()">{{ progressInfo.message }}</p>
+            <v-progress-linear
+              v-model="progressInfo.percent"
+              :color="getProgressColor(progressInfo.percent)"
+              height="12"
+              striped
+              :striped="progressInfo.percent !== 100"
+            ></v-progress-linear>
+            <div class="text-caption text-right mt-1" :style="getCaptionStyle()">
+              {{ progressInfo.percent }}% complete
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    </div>
+  </template>
+  
+  <script setup>
+import { ref, onMounted, onUnmounted, watch } from 'vue';
 import { io } from 'socket.io-client';
 import ServerPairing from './ServerPairing.vue';
 import axios from 'axios';
@@ -238,7 +305,8 @@ const {
   getTitleStyle, 
   getNormalTextStyle, 
   getCaptionStyle, 
-  getButtonStyle 
+  getButtonStyle,
+  getErrorStyle
 } = useStyleUtils();
 
 // Custom skeleton loader styling functions
@@ -276,6 +344,21 @@ const rustplusStatus = ref({
 });
 const socket = io();
 
+// Item database status
+const databaseStatus = ref({
+  loading: true,
+  itemCount: 0,
+  lastUpdated: null,
+  error: null
+});
+
+const isUpdatingDatabase = ref(false);
+const progressInfo = ref({
+  active: false,
+  percent: 0,
+  message: ''
+});
+
 onMounted(async () => {
   // Load server data if it exists
   try {
@@ -297,6 +380,63 @@ onMounted(async () => {
   socket.on('rustplusStatus', (status) => {
     rustplusStatus.value = status;
   });
+  
+  // Set up socket listeners for item database updates
+  socket.on('itemDatabaseProgress', (progress) => {
+    // Update progress info
+    progressInfo.value = {
+      active: true,
+      percent: progress.progress,
+      message: progress.message
+    };
+    
+    // Add more context to certain phases
+    if (progress.progress === 25) {
+      progressInfo.value.message += ' (this may take several minutes)';
+    }
+    
+    if (progress.progress === 70) {
+      progressInfo.value.message += ' (almost done)';
+    }
+    
+    // Update database status
+    if (progress.progress === 100) {
+      // Success - refresh database info and keep visible for a moment
+      isUpdatingDatabase.value = true;
+      
+      // Keep the success message and green progress bar visible for 3 seconds
+      setTimeout(() => {
+        fetchDatabaseStatus();
+        
+        // After showing success for 3 seconds, hide the progress
+        setTimeout(() => {
+          isUpdatingDatabase.value = false;
+          // Also reset the active state
+          progressInfo.value.active = false;
+        }, 3000);
+      }, 1000);
+    } else if (progress.progress === 0) {
+      // Error state handling
+      isUpdatingDatabase.value = true;
+    } else {
+      // Regular progress updates
+      isUpdatingDatabase.value = true;
+    }
+  });
+  
+  socket.on('itemDatabaseUpdated', () => {
+    isUpdatingDatabase.value = false;
+    progressInfo.value.active = false;
+    fetchDatabaseStatus();
+  });
+  
+  socket.on('itemDatabaseError', (error) => {
+    isUpdatingDatabase.value = false;
+    progressInfo.value.message = `Error: ${error.error}`;
+  });
+  
+  // Fetch initial database status
+  fetchDatabaseStatus();
 });
 
 onUnmounted(() => {
@@ -401,7 +541,62 @@ async function confirmDisconnect() {
     console.error('Failed to disconnect server:', error);
   }
 }
-</script>
+
+// Fetch database status
+const fetchDatabaseStatus = async () => {
+  databaseStatus.value.loading = true;
+  databaseStatus.value.error = null;
+  
+  try {
+    const response = await axios.get('/api/items');
+    if (response.data.success) {
+      databaseStatus.value = {
+        loading: false,
+        itemCount: response.data.data.itemCount || 0,
+        lastUpdated: response.data.data.lastUpdated,
+        error: null
+      };
+    } else {
+      databaseStatus.value.error = 'Failed to fetch database status';
+    }
+  } catch (error) {
+    console.error('Error fetching database status:', error);
+    databaseStatus.value.error = error.response?.data?.error || 'Network error';
+  } finally {
+    databaseStatus.value.loading = false;
+  }
+};
+
+// Update item database
+const updateItemDatabase = async () => {
+  if (isUpdatingDatabase.value) return;
+  
+  isUpdatingDatabase.value = true;
+  progressInfo.value = {
+    active: true,
+    percent: 0,
+    message: 'Starting database update...'
+  };
+  
+  try {
+    await axios.post('/api/items/update');
+    // The actual update happens in the background, progress will be sent via socket
+  } catch (error) {
+    console.error('Error starting database update:', error);
+    progressInfo.value.message = `Error: ${error.message}`;
+  }
+};
+
+function getProgressColor(percent) {
+  if (percent === 100) return 'success';
+  if (percent === 0 && progressInfo.value.message.includes('Error')) return 'error';
+  
+  // Different colors for different progress stages to provide better visual feedback
+  if (percent < 25) return 'info';     // Initial setup (blue)
+  if (percent < 70) return 'warning';  // Downloading (orange/amber)
+  return 'primary';                    // Processing (default blue)
+}
+  </script>
 
 <style scoped>
 .settings-container {
@@ -521,5 +716,17 @@ async function confirmDisconnect() {
   .server-info-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.error-message {
+  background-color: rgba(244, 67, 54, 0.1);
+  border-radius: 4px;
+  color: #f44336;
+}
+
+.progress-section {
+  background-color: rgba(0, 0, 0, 0.03);
+  border-radius: 4px;
+  padding: 12px;
 }
 </style>

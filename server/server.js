@@ -3,7 +3,10 @@ const { Server } = require("socket.io");
 const cors = require('cors');
 const pairingService = require('./services/pairingService');
 const rustplusService = require('./services/rustplusService');
+const itemDatabase = require('./services/itemDatabase');
 const socketInstance = require('./socketInstance');
+const cron = require('node-cron');
+const { main: extractRustAssets } = require('./scripts/extractRustAssets');
 
 // Create Express app
 const app = express();
@@ -41,6 +44,61 @@ const io = socketInstance.initialize(new Server(server, {
         methods: ["GET", "POST"]
     }
 }));
+
+// Serve item images
+itemDatabase.serveItemImages(app);
+
+// Item database endpoints
+app.get('/api/items', async (req, res) => {
+  try {
+    const itemDb = require('./services/itemDatabase');
+    const stats = await itemDb.getDatabaseStats();
+    
+    // If the client requests all items, return the full database
+    if (req.query.all === 'true') {
+      // Get all items from the database
+      const items = itemDb.getAllItems();
+      res.json({ 
+        success: true, 
+        data: {
+          ...stats,
+          items
+        }
+      });
+      return;
+    }
+    
+    res.json({ success: true, data: stats });
+  } catch (error) {
+    console.error('Error getting database stats:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.get('/api/items/:id', (req, res) => {
+  try {
+    const item = itemDatabase.getItemById(req.params.id);
+    if (item) {
+      res.json({ success: true, data: item });
+    } else {
+      res.status(404).json({ success: false, error: 'Item not found' });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+app.post('/api/items/update', async (req, res) => {
+  try {
+    const itemDb = require('./services/itemDatabase');
+    // Start update in background
+    itemDb.updateDatabase(io); // This now uses extractRustAssets internally
+    res.json({ success: true, message: 'Database update started' });
+  } catch (error) {
+    console.error('Error starting database update:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
 
 // Pairing endpoints
 app.post('/api/pairing/initialize', async (req, res) => {
@@ -348,6 +406,35 @@ app.get('/api/rustplus/mapMarkers', async (req, res) => {
   }
 });
 
+// Add this endpoint to your server.js file
+app.post('/api/undercutter/calculate', async (req, res) => {
+  try {
+    const { itemIds } = req.body;
+    
+    if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid item IDs are required'
+      });
+    }
+    
+    // Here you would implement your actual undercutting logic
+    // This is a placeholder implementation
+    const suggestions = await rustplusService.calculateUndercutPrices(itemIds);
+    
+    res.json({
+      success: true,
+      suggestions
+    });
+  } catch (error) {
+    console.error('Error calculating undercutting prices:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to calculate prices'
+    });
+  }
+});
+
 // Start server
 server.listen(3001, () => {
     console.log('Server running on port 3001');
@@ -365,4 +452,27 @@ server.listen(3001, () => {
       .catch(error => {
         console.error('RustPlus initialization error:', error);
       });
+    
+    // Schedule item database update for the first Thursday of each month at 8PM GMT
+    console.log('Setting up scheduled database updates for first Thursday of each month at 8PM GMT');
+    cron.schedule('0 20 * * 4', () => {
+      // Check if this is the first Thursday of the month
+      const today = new Date();
+      const day = today.getDate();
+      
+      // If this is the first Thursday of the month (day <= 7)
+      if (day <= 7) {
+        console.log('Running scheduled item database update (first Thursday of the month)');
+        itemDatabase.updateDatabase(io)
+          .then(result => console.log('Scheduled database update result:', result))
+          .catch(err => console.error('Scheduled database update failed:', err));
+      }
+    }, {
+      timezone: "Etc/GMT" // Run at specified time in GMT
+    });
+});
+
+app.post('/api/update-database', async (req, res) => {
+  const result = await extractRustAssets(io);
+  res.json(result);
 });
