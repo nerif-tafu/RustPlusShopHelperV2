@@ -4,8 +4,6 @@ const cors = require('cors');
 const pairingService = require('./services/pairingService');
 const rustplusService = require('./services/rustplusService');
 const socketInstance = require('./socketInstance');
-const fs = require('fs');
-const path = require('path');
 
 // Create Express app
 const app = express();
@@ -153,6 +151,8 @@ app.post('/api/pairing/confirm', async (req, res) => {
     }
     
     // Save the server info to RPData.json
+    const fs = require('fs');
+    const path = require('path');
     const rpDataPath = path.join(__dirname, 'RPData.json');
     
     // Read existing data
@@ -229,8 +229,12 @@ app.post('/api/pairing/restart', async (req, res) => {
 // Add this endpoint to get current server data
 app.get('/api/pairing/current', async (req, res) => {
   try {
+    const fs = require('fs');
+    const path = require('path');
+    const rpDataPath = path.join(__dirname, 'RPData.json');
+    
     // Check if file exists
-    if (!fs.existsSync(path.join(__dirname, 'RPData.json'))) {
+    if (!fs.existsSync(rpDataPath)) {
       return res.json({
         success: true,
         data: null,
@@ -239,7 +243,7 @@ app.get('/api/pairing/current', async (req, res) => {
     }
     
     // Read the server data
-    const serverData = JSON.parse(fs.readFileSync(path.join(__dirname, 'RPData.json'), 'utf8'));
+    const serverData = JSON.parse(fs.readFileSync(rpDataPath, 'utf8'));
     
     // Create a safe version without the player token
     const safeServerData = { 
@@ -268,10 +272,14 @@ app.get('/api/pairing/current', async (req, res) => {
 // Add this endpoint to disconnect the server
 app.post('/api/pairing/disconnect', async (req, res) => {
   try {
+    const fs = require('fs');
+    const path = require('path');
+    const rpDataPath = path.join(__dirname, 'RPData.json');
+    
     // Check if file exists
-    if (fs.existsSync(path.join(__dirname, 'RPData.json'))) {
+    if (fs.existsSync(rpDataPath)) {
       // Delete the file
-      fs.unlinkSync(path.join(__dirname, 'RPData.json'));
+      fs.unlinkSync(rpDataPath);
     }
     
     return res.json({
@@ -326,66 +334,21 @@ app.get('/api/rustplus/time', async (req, res) => {
   }
 });
 
-// FCM Status endpoint
-app.get('/api/fcm/status', (req, res) => {
-  // In a real implementation, you would check the actual FCM status
-  // This is a placeholder
-  res.json({
-    success: true,
-    data: {
-      active: true,
-      lastUpdate: new Date(),
-      error: null
-    }
-  });
-});
-
-// Expo Status endpoint
-app.get('/api/expo/status', (req, res) => {
-  // In a real implementation, you would check the actual Expo status
-  // This is a placeholder
-  res.json({
-    success: true,
-    data: {
-      status: 'pending', // pending, active, error
-      lastUpdate: new Date(),
-      error: null
-    }
-  });
-});
-
 // Start server
 server.listen(3001, () => {
     console.log('Server running on port 3001');
     console.log('Ready to receive pairing requests...');
     
-    // Check if we have valid server data before attempting to connect
-    const rpDataPath = path.join(__dirname, 'RPData.json');
-    try {
-      if (fs.existsSync(rpDataPath)) {
-        const serverData = JSON.parse(fs.readFileSync(rpDataPath, 'utf8'));
-        
-        // Only attempt connection if we have the minimum required data
-        if (serverData.serverIP && serverData.appPort && serverData.steamID && serverData.playerToken) {
-          console.log('Found valid server data, attempting to connect...');
-          rustplusService.initializeRustPlus()
-            .then(result => {
-              if (result.success) {
-                console.log('RustPlus initialization started');
-              } else {
-                console.log('RustPlus initialization failed:', result.error);
-              }
-            })
-            .catch(error => {
-              console.error('RustPlus initialization error:', error);
-            });
+    // Initialize RustPlus connection if server data exists
+    rustplusService.initializeRustPlus()
+      .then(result => {
+        if (result.success) {
+          console.log('RustPlus initialization started');
         } else {
-          console.log('No complete server data found, waiting for pairing...');
+          console.log('RustPlus initialization failed:', result.error);
         }
-      } else {
-        console.log('No RPData.json file found, waiting for pairing...');
-      }
-    } catch (error) {
-      console.error('Error checking server data:', error);
-    }
+      })
+      .catch(error => {
+        console.error('RustPlus initialization error:', error);
+      });
 });

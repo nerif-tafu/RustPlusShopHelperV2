@@ -85,20 +85,17 @@
                 <div class="status-indicator">
                   <v-chip
                     size="small"
-                    :color="getConnectionStatusColor()"
+                    :color="rustplusStatus.connected ? 'success' : 'error'"
                     class="status-chip"
                   >
                     <v-icon size="x-small" start>
-                      {{ getConnectionStatusIcon() }}
+                      {{ rustplusStatus.connected ? 'mdi-check-circle' : 'mdi-alert-circle' }}
                     </v-icon>
-                    {{ getConnectionStatusText() }}
+                    {{ rustplusStatus.connected ? 'Connected' : 'Disconnected' }}
                   </v-chip>
                 </div>
                 <div v-if="rustplusStatus.lastConnected" class="text-caption" :style="getCaptionStyle()">
                   Last connected: {{ formatDate(rustplusStatus.lastConnected) }}
-                </div>
-                <div v-if="rustplusStatus.lastError" class="text-caption text-error mt-1">
-                  {{ rustplusStatus.lastError }}
                 </div>
               </div>
               
@@ -108,20 +105,12 @@
                 <div class="status-indicator">
                   <v-chip
                     size="small"
-                    :color="fcmStatus.active ? 'success' : 'error'"
+                    color="success"
                     class="status-chip"
                   >
-                    <v-icon size="x-small" start>
-                      {{ fcmStatus.active ? 'mdi-check-circle' : 'mdi-alert-circle' }}
-                    </v-icon>
-                    {{ fcmStatus.active ? 'Active' : 'Inactive' }}
+                    <v-icon size="x-small" start>mdi-check-circle</v-icon>
+                    Placeholder
                   </v-chip>
-                </div>
-                <div v-if="fcmStatus.lastUpdate" class="text-caption" :style="getCaptionStyle()">
-                  Last updated: {{ formatDate(fcmStatus.lastUpdate) }}
-                </div>
-                <div v-if="fcmStatus.error" class="text-caption text-error mt-1">
-                  Error: {{ fcmStatus.error }}
                 </div>
               </div>
               
@@ -131,20 +120,12 @@
                 <div class="status-indicator">
                   <v-chip
                     size="small"
-                    :color="getExpoStatusColor()"
+                    color="warning"
                     class="status-chip"
                   >
-                    <v-icon size="x-small" start>
-                      {{ getExpoStatusIcon() }}
-                    </v-icon>
-                    {{ getExpoStatusText() }}
+                    <v-icon size="x-small" start>mdi-clock-outline</v-icon>
+                    Placeholder
                   </v-chip>
-                </div>
-                <div v-if="expoStatus.lastUpdate" class="text-caption" :style="getCaptionStyle()">
-                  Last updated: {{ formatDate(expoStatus.lastUpdate) }}
-                </div>
-                <div v-if="expoStatus.error" class="text-caption text-error mt-1">
-                  Error: {{ expoStatus.error }}
                 </div>
               </div>
             </div>
@@ -239,10 +220,10 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-    </div>
-  </template>
-  
-  <script setup>
+  </div>
+</template>
+
+<script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
 import { io } from 'socket.io-client';
 import ServerPairing from './ServerPairing.vue';
@@ -289,23 +270,11 @@ const showConfirmDialog = ref(false);
 const isLoading = ref(true);
 const rustplusStatus = ref({
   connected: false,
-  connecting: false,
   lastConnected: null,
   lastError: null,
   serverInfo: null
 });
-const fcmStatus = ref({
-  active: false,
-  lastUpdate: null,
-  error: null
-});
-const expoStatus = ref({
-  status: 'pending', // pending, active, error
-  lastUpdate: null,
-  error: null
-});
 const socket = io();
-const loadingReconnect = ref(false);
 
 onMounted(async () => {
   // Load server data if it exists
@@ -316,10 +285,6 @@ onMounted(async () => {
       
       // Get RustPlus status
       await loadRustPlusStatus();
-      // Get FCM status
-      await loadFcmStatus();
-      // Get Expo status
-      await loadExpoStatus();
     }
     // Set loading to false regardless of whether we found server data
     isLoading.value = false;
@@ -328,23 +293,15 @@ onMounted(async () => {
     isLoading.value = false;
   }
   
-  // Set up socket listeners for status updates
+  // Set up socket listeners for RustPlus status updates
   socket.on('rustplusStatus', (status) => {
     rustplusStatus.value = status;
-  });
-  socket.on('fcmStatus', (status) => {
-    fcmStatus.value = status;
-  });
-  socket.on('expoStatus', (status) => {
-    expoStatus.value = status;
   });
 });
 
 onUnmounted(() => {
   // Remove socket listeners
   socket.off('rustplusStatus');
-  socket.off('fcmStatus');
-  socket.off('expoStatus');
 });
 
 // Format a date for display
@@ -371,44 +328,6 @@ async function loadRustPlusStatus() {
     }
   } catch (error) {
     console.error('Failed to load RustPlus status:', error);
-  }
-}
-
-// Load the FCM connection status
-async function loadFcmStatus() {
-  try {
-    // You'll need to create this endpoint on your server
-    const response = await axios.get('/api/fcm/status');
-    if (response.data.success) {
-      fcmStatus.value = response.data.data;
-    }
-  } catch (error) {
-    console.error('Failed to load FCM status:', error);
-    // Set a default status if the endpoint is not yet implemented
-    fcmStatus.value = {
-      active: true,
-      lastUpdate: new Date(),
-      error: null
-    };
-  }
-}
-
-// Load the Expo notification status
-async function loadExpoStatus() {
-  try {
-    // You'll need to create this endpoint on your server
-    const response = await axios.get('/api/expo/status');
-    if (response.data.success) {
-      expoStatus.value = response.data.data;
-    }
-  } catch (error) {
-    console.error('Failed to load Expo status:', error);
-    // Set a default status if the endpoint is not yet implemented
-    expoStatus.value = {
-      status: 'pending',
-      lastUpdate: new Date(),
-      error: null
-    };
   }
 }
 
@@ -482,87 +401,7 @@ async function confirmDisconnect() {
     console.error('Failed to disconnect server:', error);
   }
 }
-
-// Get color for Expo status
-function getExpoStatusColor() {
-  switch (expoStatus.value.status) {
-    case 'active':
-      return 'success';
-    case 'pending':
-      return 'warning';
-    case 'error':
-      return 'error';
-    default:
-      return 'grey';
-  }
-}
-
-// Get icon for Expo status
-function getExpoStatusIcon() {
-  switch (expoStatus.value.status) {
-    case 'active':
-      return 'mdi-check-circle';
-    case 'pending':
-      return 'mdi-clock-outline';
-    case 'error':
-      return 'mdi-alert-circle';
-    default:
-      return 'mdi-help-circle-outline';
-  }
-}
-
-// Get text for Expo status
-function getExpoStatusText() {
-  switch (expoStatus.value.status) {
-    case 'active':
-      return 'Active';
-    case 'pending':
-      return 'Pending';
-    case 'error':
-      return 'Error';
-    default:
-      return 'Unknown';
-  }
-}
-
-// Get color for connection status
-function getConnectionStatusColor() {
-  if (rustplusStatus.value.connected) {
-    return 'success';
-  } else if (rustplusStatus.value.connecting) {
-    return 'warning';
-  } else {
-    return 'error';
-  }
-}
-
-// Get icon for connection status
-function getConnectionStatusIcon() {
-  if (rustplusStatus.value.connected) {
-    return 'mdi-check-circle';
-  } else if (rustplusStatus.value.connecting) {
-    return 'mdi-refresh';
-  } else {
-    return 'mdi-alert-circle';
-  }
-}
-
-// Get text for connection status
-function getConnectionStatusText() {
-  if (rustplusStatus.value.connected) {
-    return 'Connected';
-  } else if (rustplusStatus.value.connecting) {
-    return 'Connecting...';
-  } else {
-    return 'Disconnected';
-  }
-}
-
-function reconnectToServer() {
-  console.log('Starting reconnection process...');
-  // Implement the logic to reconnect to the server
-}
-  </script>
+</script>
 
 <style scoped>
 .settings-container {

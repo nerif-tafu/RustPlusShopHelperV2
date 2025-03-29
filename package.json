@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "scripts": {
     "devclient": "cross-env NODE_OPTIONS='--no-warnings' vite",
-    "devserver": "nodemon ./server/server.js",
+    "devserver": "nodemon ./server/server.js --ignore 'server/*.json'",
     "dev": "concurrently \"npm run devclient\" \"npm run devserver\"",
     "build": "vite build",
     "preview": "vite preview"
