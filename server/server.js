@@ -2,6 +2,7 @@ const express = require('express');
 const { Server } = require("socket.io");
 const cors = require('cors');
 const pairingService = require('./services/pairingService');
+const socketInstance = require('./socketInstance');
 
 // Create Express app
 const app = express();
@@ -31,14 +32,14 @@ app.use((err, req, res, next) => {
 const server = require('http').createServer(app);
 
 // Initialize Socket.IO
-const io = new Server(server, {
+const io = socketInstance.initialize(new Server(server, {
     cors: {
         origin: process.env.NODE_ENV === 'production' 
             ? false 
             : "http://localhost:3000",
         methods: ["GET", "POST"]
     }
-});
+}));
 
 // Pairing endpoints
 app.post('/api/pairing/initialize', async (req, res) => {
@@ -53,21 +54,41 @@ app.post('/api/pairing/initialize', async (req, res) => {
 
 app.post('/api/pairing/register', async (req, res) => {
     try {
-        console.log('Received pairing request...');
         const { authToken } = req.body;
-        console.log('Auth token received:', authToken.substring(0, 10) + '...');
-
-        const result = await pairingService.registerWithRustPlus(authToken);
-        console.log('Full registration process completed:', result);
-
-        res.json({ 
-            success: true, 
-            message: 'Successfully paired with Rust+',
-            data: result
+        console.log('Received pairing request...');
+        console.log('Auth token received:', authToken?.substring(0, 10) + '...');
+        
+        // Send immediate response that registration has started
+        res.json({
+            success: true,
+            message: 'Registration started, please wait for server readiness',
+            status: 'initializing',
+            data: {
+                readyForPairing: false
+            }
         });
+        
+        // Start the registration process in the background
+        try {
+            const result = await pairingService.registerWithRustPlus(authToken);
+            
+            // When pairing data is received, emit via socket.io to all clients
+            io.emit('pairingComplete', {
+                success: true,
+                data: result
+            });
+            
+            console.log('Emitted pairing data to clients');
+        } catch (error) {
+            console.error('Background registration failed:', error);
+            io.emit('pairingError', {
+                success: false,
+                error: error.message
+            });
+        }
     } catch (error) {
-        console.error('Registration failed:', error.message);
-        res.status(500).json({ success: false, message: error.message });
+        console.error('Registration failed:', error);
+        res.status(500).json({ success: false, error: 'Failed to register' });
     }
 });
 
@@ -114,6 +135,93 @@ app.get('/callback', async (req, res) => {
     } catch (error) {
         console.error('Callback error:', error);
         res.status(500).send('Failed to process callback');
+    }
+});
+
+// New endpoint to confirm pairing and save server details
+app.post('/api/pairing/confirm', async (req, res) => {
+  try {
+    const { serverInfo } = req.body;
+    
+    if (!serverInfo) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Server info is required' 
+      });
+    }
+    
+    // Save the server info to RPData.json
+    const fs = require('fs');
+    const path = require('path');
+    const rpDataPath = path.join(__dirname, 'RPData.json');
+    
+    // Read existing data
+    let rpData = {};
+    try {
+      rpData = JSON.parse(fs.readFileSync(rpDataPath, 'utf8'));
+    } catch (error) {
+      console.warn('Could not read existing RPData.json, creating new file');
+    }
+    
+    // Update with new server info
+    const serverName = serverInfo.name || 
+                      serverInfo.appData?.find(item => item.key === 'gcm.notification.title')?.value || 
+                      `${serverInfo.ip}:${serverInfo.port}`;
+
+    rpData.serverName = serverName;
+    rpData.serverIP = serverInfo.ip;
+    rpData.appPort = serverInfo.port;
+    rpData.steamID = serverInfo.playerId;
+    rpData.playerToken = serverInfo.playerToken;
+    
+    // Save to file
+    fs.writeFileSync(rpDataPath, JSON.stringify(rpData, null, 2), 'utf8');
+    
+    res.json({ 
+      success: true, 
+      message: 'Server details saved successfully',
+      data: rpData
+    });
+  } catch (error) {
+    console.error('Failed to save server details:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// Add a new endpoint to check if server is ready for pairing
+app.get('/api/pairing/status', async (req, res) => {
+    try {
+        const status = pairingService.getPairingStatus();
+        res.json({
+            success: true,
+            status: status.ready ? 'ready' : 'initializing',
+            message: status.message,
+            data: {
+                readyForPairing: status.ready
+            }
+        });
+    } catch (error) {
+        console.error('Failed to get pairing status:', error);
+        res.status(500).json({ success: false, error: 'Failed to get status' });
+    }
+});
+
+// Add a new endpoint to restart the FCM listener
+app.post('/api/pairing/restart', async (req, res) => {
+    try {
+        // Use the same FCM credentials but restart the listener
+        const result = await pairingService.restartPairingListener();
+        
+        res.json({
+            success: true,
+            message: 'FCM listener restarted, ready for pairing',
+            data: {
+                readyForPairing: true
+            }
+        });
+    } catch (error) {
+        console.error('Failed to restart FCM listener:', error);
+        res.status(500).json({ success: false, error: 'Failed to restart listener' });
     }
 });
 

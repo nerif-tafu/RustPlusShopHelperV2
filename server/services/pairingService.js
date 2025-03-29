@@ -13,6 +13,21 @@ const FCM_CONFIG = {
     androidPackageCert: "E28D05345FB78A7A1A63D70F4A302DBF426CA5AD"
 };
 
+let pairingStatus = {
+    ready: false,
+    message: 'Initializing FCM connection...'
+};
+
+// Store the current FCM credentials globally for reuse
+let currentFcmCredentials = null;
+
+// Add at the top of the file
+let pairingRequestTimestamp = Date.now();
+
+function getPairingStatus() {
+    return pairingStatus;
+}
+
 // Generate a random FCM token
 function generateFCMToken() {
     return crypto.randomBytes(32).toString('hex');
@@ -32,8 +47,14 @@ async function getExpoPushToken(fcmToken) {
 
 async function registerWithRustPlus(authToken) {
     try {
-        console.log('Initializing FCM...');
+        // Generate a new timestamp for this pairing session
+        pairingRequestTimestamp = Date.now();
+        
+        console.log('Initializing FCM with timestamp:', pairingRequestTimestamp);
         const { fcmCredentials } = await initializePairing();
+        
+        // Store for later reuse
+        currentFcmCredentials = fcmCredentials;
 
         // Get Expo Push Token
         console.log('Getting Expo Push Token...');
@@ -59,17 +80,17 @@ async function registerWithRustPlus(authToken) {
 
         console.log('Registration successful');
         
-        // Start listening for pairing notification
+        // Start listening for pairing notification with timestamp filter
         console.log('Starting to listen for pairing notification...');
-        const pairingNotification = await listenForPairingNotification(fcmCredentials);
+        const serverInfo = await listenForPairingNotification(fcmCredentials, pairingRequestTimestamp);
+        console.log('Pairing notification received:', serverInfo);
         
         return {
-            registrationToken: response.data.token,
-            pairingData: pairingNotification,
-            expoPushToken: expoPushToken
+            pairingData: serverInfo,
+            fcmCredentials
         };
     } catch (error) {
-        console.error('Registration failed:', error.response?.data || error.message);
+        console.error('Registration error:', error);
         throw error;
     }
 }
@@ -107,7 +128,16 @@ async function initializePairing() {
     }
 }
 
-async function listenForPairingNotification(fcmCredentials) {
+async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
+    // Store the timestamp we'll use to filter messages
+    const validSince = requestTimestamp || Date.now();
+    console.log(`Starting FCM listener with timestamp filter: ${validSince}`);
+    
+    pairingStatus = {
+        ready: false,
+        message: 'Initializing FCM connection...'
+    };
+    
     return new Promise((resolve, reject) => {
         console.log('Starting FCM listener...');
         let isResolved = false;
@@ -140,10 +170,48 @@ async function listenForPairingNotification(fcmCredentials) {
 
         client.on('ON_DATA_RECEIVED', (data) => {
             console.log('Received FCM data:', JSON.stringify(data, null, 2));
-            console.log('Message data:', data.message?.data);
-            console.log('Raw notification:', data.message?.data?.notification);
             
-            if (data.message?.data?.notification) {
+            // Check if this is a fresh message using the sent timestamp
+            const messageSentTimestamp = parseInt(data.sent || '0', 10);
+            if (messageSentTimestamp > 0 && messageSentTimestamp < validSince) {
+                console.log(`Ignoring stale FCM message (sent: ${messageSentTimestamp}, filter: ${validSince})`);
+                return; // Skip this message, it's from before our current pairing request
+            }
+            
+            // Look for the server info in the appData array
+            const bodyData = data.appData?.find(item => item.key === 'body')?.value;
+            
+            if (bodyData) {
+                try {
+                    const serverInfo = JSON.parse(bodyData);
+                    console.log('Parsed server info:', serverInfo);
+                    
+                    if (serverInfo.playerToken) {
+                        console.log('Player token received:', serverInfo.playerToken);
+                        isResolved = true;
+                        client.destroy();
+                        
+                        // Create a clean server info object
+                        const cleanServerInfo = {
+                            name: serverInfo.name || data.appData?.find(item => item.key === 'gcm.notification.title')?.value || 'Unknown Server',
+                            desc: serverInfo.desc || 'No description provided',
+                            ip: serverInfo.ip,
+                            port: serverInfo.port,
+                            playerId: serverInfo.playerId,
+                            playerToken: serverInfo.playerToken
+                        };
+                        
+                        console.log('Returning clean server info:', cleanServerInfo);
+                        resolve(cleanServerInfo);
+                    } else {
+                        console.log('Warning: Server info received but no player token found');
+                        console.log('Full server info:', serverInfo);
+                    }
+                } catch (error) {
+                    console.error('Error parsing server info:', error);
+                    console.error('Raw body data:', bodyData);
+                }
+            } else if (data.message?.data?.notification) {
                 try {
                     const notification = JSON.parse(data.message.data.notification);
                     console.log('Parsed notification data:', notification);
@@ -162,7 +230,8 @@ async function listenForPairingNotification(fcmCredentials) {
                     console.error('Raw notification string:', data.message.data.notification);
                 }
             } else {
-                console.log('Received data but no notification found. Full data:', data);
+                console.log('Received data but no server info found. Searching appData...');
+                console.log('Full data:', data);
             }
         });
 
@@ -176,6 +245,11 @@ async function listenForPairingNotification(fcmCredentials) {
                 connected: client.connected
             });
             console.log('Please click "Pair with Server" in the Rust game now');
+            
+            pairingStatus = {
+                ready: true,
+                message: 'Ready for pairing! Please click "Pair with Server" in your Rust game.'
+            };
         });
 
         // Add more event listeners
@@ -233,8 +307,80 @@ async function listenForPairingNotification(fcmCredentials) {
     });
 }
 
+// Update the restartPairingListener function to create a brand new connection
+async function restartPairingListener() {
+    if (!currentFcmCredentials) {
+        throw new Error('No FCM credentials available, please start the pairing process again');
+    }
+    
+    // Generate a fresh timestamp for this restart
+    pairingRequestTimestamp = Date.now();
+    console.log(`Restarting FCM listener with timestamp filter: ${pairingRequestTimestamp}`);
+    
+    // Reset status to ready
+    pairingStatus = {
+        ready: true,
+        message: 'Ready for pairing! Please click "Pair with Server" in your Rust game.'
+    };
+    
+    console.log('Restarting FCM listener with stored credentials...');
+    
+    // Create a new promise to handle the pairing
+    const pairingPromise = new Promise((resolve, reject) => {
+        // Start listening for pairing notification with our timestamp filter
+        listenForPairingNotification(currentFcmCredentials, pairingRequestTimestamp)
+            .then(serverInfo => {
+                console.log('Restart pairing completed with server info:', serverInfo);
+                
+                // Get the Socket.IO instance and emit the event
+                const socketInstance = require('../socketInstance');
+                const io = socketInstance.getIO();
+                
+                if (io) {
+                    io.emit('pairingComplete', {
+                        success: true,
+                        data: {
+                            pairingData: serverInfo,
+                            fcmCredentials: currentFcmCredentials
+                        }
+                    });
+                    
+                    resolve({
+                        success: true,
+                        data: serverInfo
+                    });
+                } else {
+                    const error = new Error('Socket.IO instance not found');
+                    console.error(error);
+                    reject(error);
+                }
+            })
+            .catch(error => {
+                console.error('Background pairing listener error:', error);
+                
+                // Get the Socket.IO instance and emit an error
+                const socketInstance = require('../socketInstance');
+                const io = socketInstance.getIO();
+                
+                if (io) {
+                    io.emit('pairingError', {
+                        success: false,
+                        error: error.message
+                    });
+                }
+                
+                reject(error);
+            });
+    });
+    
+    // Return success immediately - the actual pairing will happen in the background
+    return { success: true };
+}
+
 module.exports = {
     initializePairing,
     registerWithRustPlus,
-    listenForPairingNotification
+    listenForPairingNotification,
+    getPairingStatus,
+    restartPairingListener
 }; 
