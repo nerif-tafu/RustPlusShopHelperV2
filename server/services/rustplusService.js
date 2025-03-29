@@ -264,6 +264,11 @@ function handleBroadcast(broadcast) {
   if (broadcast.teamChanged) {
     io.emit('teamChanged', broadcast.teamChanged);
   }
+  
+  // Map markers updated broadcast
+  if (broadcast.mapMarkers) {
+    io.emit('mapMarkersUpdated', broadcast.mapMarkers);
+  }
 }
 
 /**
@@ -358,11 +363,58 @@ async function sendTeamMessage(message) {
   });
 }
 
+/**
+ * Get the map markers from the Rust server
+ */
+async function getMapMarkers() {
+  return new Promise((resolve, reject) => {
+    if (!rustplusInstance || !connectionStatus.connected) {
+      reject(new Error('Not connected to Rust+ server'));
+      return;
+    }
+    
+    rustplusInstance.getMapMarkers((message) => {
+      console.log('Received map markers response');
+      if (message.response && message.response.mapMarkers) {
+        const markers = message.response.mapMarkers.markers || [];
+        console.log(`Found ${markers.length} total markers`);
+        
+        // Count vending machines
+        const vendingMachines = markers.filter(m => m.type === 3);
+        console.log(`Found ${vendingMachines.length} vending machines`);
+        
+        // Log marker types for debugging
+        const markerTypes = {};
+        markers.forEach(marker => {
+          markerTypes[marker.type] = (markerTypes[marker.type] || 0) + 1;
+        });
+        console.log('Marker types distribution:', markerTypes);
+        
+        // Log a sample of vending machine names
+        if (vendingMachines.length > 0) {
+          console.log('Sample vending machine names:');
+          vendingMachines.slice(0, 3).forEach(vm => {
+            console.log(` - ${vm.name}`);
+            console.log('  Full marker data:', JSON.stringify(vm));
+          });
+        }
+        
+        resolve(message.response.mapMarkers);
+      } else {
+        console.log('Failed to get map markers - response format unexpected');
+        console.log(JSON.stringify(message));
+        reject(new Error('Failed to get map markers'));
+      }
+    });
+  });
+}
+
 module.exports = {
   initializeRustPlus,
   getStatus,
   getTime,
   getMap,
   sendTeamMessage,
-  checkSubscription
+  checkSubscription,
+  getMapMarkers
 }; 

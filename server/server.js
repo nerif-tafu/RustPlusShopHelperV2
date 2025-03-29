@@ -334,6 +334,20 @@ app.get('/api/rustplus/time', async (req, res) => {
   }
 });
 
+// Add an endpoint to get map markers from the Rust server
+app.get('/api/rustplus/mapMarkers', async (req, res) => {
+  try {
+    const markers = await rustplusService.getMapMarkers();
+    res.json({
+      success: true,
+      data: markers
+    });
+  } catch (error) {
+    console.error('Failed to get map markers from Rust server:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Start server
 server.listen(3001, () => {
     console.log('Server running on port 3001');
