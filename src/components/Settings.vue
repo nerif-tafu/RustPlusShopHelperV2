@@ -30,118 +30,116 @@
               class="stepper-custom"
               :hide-actions="activeStep === '2' || activeStep === '3' || activeStep === '4'"
             >
-              <v-stepper-window>
-                <!-- Login Step -->
-                <v-stepper-window-item value="1">
-                  <h3 class="text-h6 mb-4">Login with Steam</h3>
-                  <ol class="text-body-1">
-                    <li>
-                      <v-btn
-                        color="primary"
-                        class="mb-2 navbar-btn"
-                        @click="openSteamLogin"
-                      >
-                        <v-icon left class="pr-2">mdi-steam</v-icon>
-                        Open Rust+ Login
-                      </v-btn>
-                    </li>
-                    <li>1. Press the button above to login with your Steam account</li>
-                    <li>2. Once you are at the "Welcome" screen, click <strong>Next</strong></li>
-                  </ol>
-                </v-stepper-window-item>
-
-                <!-- Copy Step -->
-                <v-stepper-window-item value="2">
-                  <h3 class="text-h6 mb-4">Copy the Auth Data</h3>
-                  
-                  <div v-if="isPairingInProgress" class="text-center py-4">
-                    <v-progress-circular
-                      indeterminate
-                      color="primary"
-                      class="mb-4"
-                    ></v-progress-circular>
-                    
-                    <div class="text-body-1 mb-2">{{ serverReadyMessage }}</div>
-                    <div class="text-caption">Please wait while we connect to the Rust+ servers...</div>
-                  </div>
-                  
-                  <div v-else>
-                    <ol class="text-body-1">
-                      <li>1. On the welcome page, right-click and select "View Page Source"</li>
-                      <li>2. Press Ctrl+A to select all the HTML content</li>
-                      <li>3. Press Ctrl+C to copy it</li>
-                      <li>4. Click the "Paste HTML" button below</li>
-                    </ol>
+              <!-- Login Step -->
+              <template v-slot:item.1>
+                <h3 class="text-h6 mb-4">Login with Steam</h3>
+                <ol class="text-body-1">
+                  <li>
                     <v-btn
                       color="primary"
-                      class="mt-4 navbar-btn"
-                      @click="promptForHTML"
+                      class="mb-2 navbar-btn"
+                      @click="openSteamLogin"
                     >
-                      <v-icon left class="pr-2">mdi-content-paste</v-icon>
-                      Paste HTML
+                      <v-icon left class="pr-2">mdi-steam</v-icon>
+                      Open Rust+ Login
                     </v-btn>
-                  </div>
-                </v-stepper-window-item>
+                  </li>
+                  <li>1. Press the button above to login with your Steam account</li>
+                  <li>2. Once you are at the "Welcome" screen, click <strong>Next</strong></li>
+                </ol>
+              </template>
 
-                <!-- Pair Step -->
-                <v-stepper-window-item value="3">
-                  <h3 class="text-h6 mb-4">Complete Pairing with Rust server</h3>
+              <!-- Copy Step -->
+              <template v-slot:item.2>
+                <h3 class="text-h6 mb-4">Copy the Auth Data</h3>
+                
+                <div v-if="isPairingInProgress" class="text-center py-4">
+                  <v-progress-circular
+                    indeterminate
+                    color="primary"
+                    class="mb-4"
+                  ></v-progress-circular>
+                  
+                  <div class="text-body-1 mb-2">{{ serverReadyMessage }}</div>
+                  <div class="text-caption">Please wait while we connect to the Rust+ servers...</div>
+                </div>
+                
+                <div v-else>
                   <ol class="text-body-1">
-                    <li>1. Open Rust and connect to the server you want to pair with</li>
-                    <li>2. Press <v-code>ESC</v-code> to open the menu and click <v-code>Rust+</v-code></li>
-                    <li>3. Click <v-code>Pair with Server</v-code></li>
+                    <li>1. On the welcome page, right-click and select "View Page Source"</li>
+                    <li>2. Press Ctrl+A to select all the HTML content</li>
+                    <li>3. Press Ctrl+C to copy it</li>
+                    <li>4. Click the "Paste HTML" button below</li>
                   </ol>
-                </v-stepper-window-item>
+                  <v-btn
+                    color="primary"
+                    class="mt-4 navbar-btn"
+                    @click="promptForHTML"
+                  >
+                    <v-icon left class="pr-2">mdi-content-paste</v-icon>
+                    Paste HTML
+                  </v-btn>
+                </div>
+              </template>
 
-                <!-- Confirmation Step -->
-                <v-stepper-window-item value="4">
-                  <v-card hide-actions class="content-box">
-                    <div v-if="serverInfo" class="server-details mb-4">
-                      <div class="text-h6 mb-2">{{ serverInfo.name }}</div>
-                      <div class="text-body-2 mb-4">{{ serverInfo.desc || "No description provided" }}</div>
-                      
-                      <v-divider class="mb-4"></v-divider>
-                      
-                      <div class="d-flex align-center mb-2">
-                        <v-icon class="mr-2">mdi-server</v-icon>
-                        <div>
-                          <div class="text-caption">Server Address</div>
-                          <div>{{ serverInfo.ip }}:{{ serverInfo.port }}</div>
-                        </div>
-                      </div>
-                      
-                      <div class="d-flex align-center mb-2">
-                        <v-icon class="mr-2">mdi-steam</v-icon>
-                        <div>
-                          <div class="text-caption">Steam ID</div>
-                          <div>{{ serverInfo.playerId }}</div>
-                        </div>
+              <!-- Pair Step -->
+              <template v-slot:item.3>
+                <h3 class="text-h6 mb-4">Complete Pairing with Rust server</h3>
+                <ol class="text-body-1">
+                  <li>1. Open Rust and connect to the server you want to pair with</li>
+                  <li>2. Press <v-code>ESC</v-code> to open the menu and click <v-code>Rust+</v-code></li>
+                  <li>3. Click <v-code>Pair with Server</v-code></li>
+                </ol>
+              </template>
+
+              <!-- Confirmation Step -->
+              <template v-slot:item.4>
+                <v-card hide-actions class="content-box">
+                  <div v-if="serverInfo" class="server-details mb-4">
+                    <div class="text-h6 mb-2">{{ serverInfo.name }}</div>
+                    <div class="text-body-2 mb-4">{{ serverInfo.desc || "No description provided" }}</div>
+                    
+                    <v-divider class="mb-4"></v-divider>
+                    
+                    <div class="d-flex align-center mb-2">
+                      <v-icon class="mr-2">mdi-server</v-icon>
+                      <div>
+                        <div class="text-caption">Server Address</div>
+                        <div>{{ serverInfo.ip }}:{{ serverInfo.port }}</div>
                       </div>
                     </div>
                     
-                    <div class="d-flex justify-space-between mt-4">
-                      <v-btn
-                        color="error"
-                        variant="outlined"
-                        class="navbar-btn"
-                        @click="restartPairing"
-                      >
-                        <v-icon left class="pr-2">mdi-arrow-left</v-icon>
-                        Go Back
-                      </v-btn>
-                      
-                      <v-btn
-                        color="success"
-                        class="navbar-btn"
-                        @click="confirmPairing"
-                      >
-                        <v-icon left class="pr-2">mdi-check</v-icon>
-                        Confirm and Save
-                      </v-btn>
+                    <div class="d-flex align-center mb-2">
+                      <v-icon class="mr-2">mdi-steam</v-icon>
+                      <div>
+                        <div class="text-caption">Steam ID</div>
+                        <div>{{ serverInfo.playerId }}</div>
+                      </div>
                     </div>
-                  </v-card>
-                </v-stepper-window-item>
-              </v-stepper-window>
+                  </div>
+                  
+                  <div class="d-flex justify-space-between mt-4">
+                    <v-btn
+                      color="error"
+                      variant="outlined"
+                      class="navbar-btn"
+                      @click="restartPairing"
+                    >
+                      <v-icon left class="pr-2">mdi-arrow-left</v-icon>
+                      Go Back
+                    </v-btn>
+                    
+                    <v-btn
+                      color="success"
+                      class="navbar-btn"
+                      @click="confirmPairing"
+                    >
+                      <v-icon left class="pr-2">mdi-check</v-icon>
+                      Confirm and Save
+                    </v-btn>
+                  </div>
+                </v-card>
+              </template>
             </v-stepper>
           </v-card-text>
         </v-card>
@@ -231,9 +229,12 @@ const steps = [
   }
 ];
 
-// Add this debug watcher
+// Remove the debug watcher
 watch(activeStep, (newValue, oldValue) => {
-  console.log(`Step changed from ${oldValue} to ${newValue}`);
+  // Only log step changes for important transitions
+  if (newValue === '3' || newValue === '4') {
+    console.log(`Advancing to step ${newValue}`);
+  }
 });
 
 // Add socket connection
@@ -243,15 +244,10 @@ const socket = io();
 onMounted(() => {
   // Listen for pairing completion
   socket.on('pairingComplete', (data) => {
-    console.log('Received pairing completion data:', data);
-    console.log('Server info object:', data.data);
-    console.log('Current step:', activeStep.value);
-    console.log('Restart mode:', isRestartMode.value);
-    
+    // Keep only essential logging
     if (data.success && data.data && data.data.pairingData) {
       // Store the server info
       serverInfo.value = data.data.pairingData;
-      console.log('Set serverInfo to:', serverInfo.value);
       
       // Only automatically advance if we're not in restart mode and still on step 3
       if (!isRestartMode.value && activeStep.value === '3') {
@@ -362,64 +358,6 @@ function openSteamLogin() {
 function promptForHTML() {
   showHTMLDialog.value = true;
 }
-
-function goToNextStep() {
-  activeStep.value = String(Number(activeStep.value) + 1);
-}
-
-// Style functions matching Undercutter.vue
-const getBoxStyle = () => ({
-  backgroundColor: themeColors['container'],
-  padding: '24px',
-  marginBottom: '24px',
-  borderRadius: '8px',
-});
-
-const getTitleStyle = () => ({
-  color: themeColors['text-light'],
-  fontWeight: 'bold',
-  marginBottom: '16px',
-});
-
-const getSubtitleStyle = () => ({
-  color: themeColors['text-light'],
-  fontWeight: 'bold',
-  marginBottom: '12px',
-  fontSize: '1.1em',
-});
-
-const getNormalTextStyle = () => ({
-  color: themeColors['text'],
-  marginBottom: '16px',
-});
-
-const getButtonStyle = () => ({
-  textTransform: 'none',
-  fontWeight: '500',
-});
-
-const getListStyle = () => ({
-  color: themeColors['text'],
-  marginLeft: '24px',
-  lineHeight: '1.8',
-});
-
-const getStepperStyle = () => ({
-  backgroundColor: 'transparent',
-  '& .v-stepper-header': {
-    backgroundColor: themeColors['container-light-bg'],
-  },
-});
-
-const getStepperItemStyle = () => ({
-  color: themeColors['text-light'],
-  backgroundColor: themeColors['container'],
-});
-
-const getTextareaStyle = () => ({
-  backgroundColor: themeColors['container-light-bg'],
-  color: themeColors['text'],
-});
 
 // Add confirmation function
 async function confirmPairing() {

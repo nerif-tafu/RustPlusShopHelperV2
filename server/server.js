@@ -56,7 +56,6 @@ app.post('/api/pairing/register', async (req, res) => {
     try {
         const { authToken } = req.body;
         console.log('Received pairing request...');
-        console.log('Auth token received:', authToken?.substring(0, 10) + '...');
         
         // Send immediate response that registration has started
         res.json({
@@ -78,7 +77,7 @@ app.post('/api/pairing/register', async (req, res) => {
                 data: result
             });
             
-            console.log('Emitted pairing data to clients');
+            console.log('Server pairing completed, data sent to client');
         } catch (error) {
             console.error('Background registration failed:', error);
             io.emit('pairingError', {
@@ -160,7 +159,7 @@ app.post('/api/pairing/confirm', async (req, res) => {
     try {
       rpData = JSON.parse(fs.readFileSync(rpDataPath, 'utf8'));
     } catch (error) {
-      console.warn('Could not read existing RPData.json, creating new file');
+      console.warn('Creating new RPData.json file');
     }
     
     // Update with new server info
@@ -176,6 +175,7 @@ app.post('/api/pairing/confirm', async (req, res) => {
     
     // Save to file
     fs.writeFileSync(rpDataPath, JSON.stringify(rpData, null, 2), 'utf8');
+    console.log('Server details saved successfully');
     
     res.json({ 
       success: true, 

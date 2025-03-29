@@ -21,7 +21,7 @@ let pairingStatus = {
 // Store the current FCM credentials globally for reuse
 let currentFcmCredentials = null;
 
-// Add at the top of the file
+// Timestamp for filtering messages
 let pairingRequestTimestamp = Date.now();
 
 function getPairingStatus() {
@@ -50,7 +50,7 @@ async function registerWithRustPlus(authToken) {
         // Generate a new timestamp for this pairing session
         pairingRequestTimestamp = Date.now();
         
-        console.log('Initializing FCM with timestamp:', pairingRequestTimestamp);
+        console.log('Initializing FCM for pairing...');
         const { fcmCredentials } = await initializePairing();
         
         // Store for later reuse
@@ -59,8 +59,7 @@ async function registerWithRustPlus(authToken) {
         // Get Expo Push Token
         console.log('Getting Expo Push Token...');
         const expoPushToken = await getExpoPushToken(fcmCredentials.fcm.token);
-        console.log('Got Expo Push Token:', expoPushToken);
-
+        
         // Register with Rust+ using Expo token
         console.log('Registering with Rust+...');
         const registerData = {
@@ -81,9 +80,9 @@ async function registerWithRustPlus(authToken) {
         console.log('Registration successful');
         
         // Start listening for pairing notification with timestamp filter
-        console.log('Starting to listen for pairing notification...');
+        console.log('Waiting for pairing notification from Rust game...');
         const serverInfo = await listenForPairingNotification(fcmCredentials, pairingRequestTimestamp);
-        console.log('Pairing notification received:', serverInfo);
+        console.log('Pairing completed successfully');
         
         return {
             pairingData: serverInfo,
@@ -107,23 +106,10 @@ async function initializePairing() {
             FCM_CONFIG.androidPackageName,
             FCM_CONFIG.androidPackageCert
         );
-        console.log('Full FCM credentials:', {
-            androidId: fcmCredentials.gcm.androidId,
-            securityToken: fcmCredentials.gcm.securityToken,
-            appId: fcmCredentials.gcm.appId,
-            fcmToken: fcmCredentials.fcm.token
-        });
 
-        // Skip Expo token for now
-        return {
-            fcmCredentials
-        };
+        return { fcmCredentials };
     } catch (error) {
-        console.error('Detailed FCM error:', error);
-        if (error.response) {
-            console.error('FCM response data:', error.response.data);
-            console.error('FCM response status:', error.response.status);
-        }
+        console.error('FCM registration error:', error);
         throw error;
     }
 }
@@ -131,7 +117,6 @@ async function initializePairing() {
 async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
     // Store the timestamp we'll use to filter messages
     const validSince = requestTimestamp || Date.now();
-    console.log(`Starting FCM listener with timestamp filter: ${validSince}`);
     
     pairingStatus = {
         ready: false,
@@ -162,19 +147,15 @@ async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
         function startHeartbeat() {
             heartbeatInterval = setInterval(() => {
                 if (client.connected) {
-                    console.log('Sending heartbeat...');
                     client.heartbeat();
                 }
             }, 30000); // Every 30 seconds
         }
 
         client.on('ON_DATA_RECEIVED', (data) => {
-            console.log('Received FCM data:', JSON.stringify(data, null, 2));
-            
             // Check if this is a fresh message using the sent timestamp
             const messageSentTimestamp = parseInt(data.sent || '0', 10);
             if (messageSentTimestamp > 0 && messageSentTimestamp < validSince) {
-                console.log(`Ignoring stale FCM message (sent: ${messageSentTimestamp}, filter: ${validSince})`);
                 return; // Skip this message, it's from before our current pairing request
             }
             
@@ -184,10 +165,9 @@ async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
             if (bodyData) {
                 try {
                     const serverInfo = JSON.parse(bodyData);
-                    console.log('Parsed server info:', serverInfo);
                     
                     if (serverInfo.playerToken) {
-                        console.log('Player token received:', serverInfo.playerToken);
+                        console.log('Server pairing received');
                         isResolved = true;
                         client.destroy();
                         
@@ -201,50 +181,17 @@ async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
                             playerToken: serverInfo.playerToken
                         };
                         
-                        console.log('Returning clean server info:', cleanServerInfo);
                         resolve(cleanServerInfo);
-                    } else {
-                        console.log('Warning: Server info received but no player token found');
-                        console.log('Full server info:', serverInfo);
                     }
                 } catch (error) {
                     console.error('Error parsing server info:', error);
-                    console.error('Raw body data:', bodyData);
                 }
-            } else if (data.message?.data?.notification) {
-                try {
-                    const notification = JSON.parse(data.message.data.notification);
-                    console.log('Parsed notification data:', notification);
-                    
-                    if (notification.playerToken) {
-                        console.log('Player token received:', notification.playerToken);
-                        isResolved = true;
-                        client.destroy();
-                        resolve(notification);
-                    } else {
-                        console.log('Warning: Notification received but no player token found');
-                        console.log('Full notification object:', notification);
-                    }
-                } catch (error) {
-                    console.error('Error parsing notification:', error);
-                    console.error('Raw notification string:', data.message.data.notification);
-                }
-            } else {
-                console.log('Received data but no server info found. Searching appData...');
-                console.log('Full data:', data);
             }
         });
 
         client.on('connect', () => {
-            console.log('FCM client connected, starting heartbeat...');
             startHeartbeat();
-            console.log('FCM Client Details:', {
-                androidId: fcmCredentials.gcm.androidId,
-                persistentIds: [],
-                lastStreamId: client.lastStreamId,
-                connected: client.connected
-            });
-            console.log('Please click "Pair with Server" in the Rust game now');
+            console.log('FCM client connected, ready for pairing');
             
             pairingStatus = {
                 ready: true,
@@ -252,21 +199,7 @@ async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
             };
         });
 
-        // Add more event listeners
-        client.on('message', (message) => {
-            console.log('Raw FCM message received:', message);
-        });
-
-        client.on('notification', (notification) => {
-            console.log('FCM notification received:', notification);
-        });
-
-        client.on('messageStanza', (stanza) => {
-            console.log('FCM message stanza received:', stanza);
-        });
-
         client.on('disconnect', () => {
-            console.log('FCM client disconnected, clearing heartbeat...');
             if (heartbeatInterval) {
                 clearInterval(heartbeatInterval);
             }
@@ -284,12 +217,8 @@ async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
 
         // Connect to FCM
         client.connect()
-            .then(() => {
-                console.log('FCM client connected successfully');
-            })
             .catch(error => {
-                console.error('Detailed connection error:', error);
-                console.error('Connection stack:', error.stack);
+                console.error('FCM connection error:', error);
                 reject(error);
             });
 
@@ -307,7 +236,6 @@ async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
     });
 }
 
-// Update the restartPairingListener function to create a brand new connection
 async function restartPairingListener() {
     if (!currentFcmCredentials) {
         throw new Error('No FCM credentials available, please start the pairing process again');
@@ -315,7 +243,7 @@ async function restartPairingListener() {
     
     // Generate a fresh timestamp for this restart
     pairingRequestTimestamp = Date.now();
-    console.log(`Restarting FCM listener with timestamp filter: ${pairingRequestTimestamp}`);
+    console.log('Restarting FCM listener for new pairing request');
     
     // Reset status to ready
     pairingStatus = {
@@ -323,14 +251,12 @@ async function restartPairingListener() {
         message: 'Ready for pairing! Please click "Pair with Server" in your Rust game.'
     };
     
-    console.log('Restarting FCM listener with stored credentials...');
-    
     // Create a new promise to handle the pairing
     const pairingPromise = new Promise((resolve, reject) => {
         // Start listening for pairing notification with our timestamp filter
         listenForPairingNotification(currentFcmCredentials, pairingRequestTimestamp)
             .then(serverInfo => {
-                console.log('Restart pairing completed with server info:', serverInfo);
+                console.log('Pairing completed after restart');
                 
                 // Get the Socket.IO instance and emit the event
                 const socketInstance = require('../socketInstance');
@@ -356,7 +282,7 @@ async function restartPairingListener() {
                 }
             })
             .catch(error => {
-                console.error('Background pairing listener error:', error);
+                console.error('Pairing error after restart:', error);
                 
                 // Get the Socket.IO instance and emit an error
                 const socketInstance = require('../socketInstance');
