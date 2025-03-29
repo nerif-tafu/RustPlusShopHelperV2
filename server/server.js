@@ -435,6 +435,173 @@ app.post('/api/undercutter/calculate', async (req, res) => {
   }
 });
 
+// Add this new endpoint for bulk vending machine data
+app.get('/api/rustplus/vendingMachines', async (req, res) => {
+  try {
+    // Get access to rustplus service
+    const rustplus = rustplusService;
+    
+    // Check connection status
+    const status = rustplusService.getStatus();
+    if (!status.connected) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Not connected to Rust+' 
+      });
+    }
+    
+    // Use cached map markers instead of making a new request
+    const mapMarkers = rustplusService.getCachedMapMarkers();
+    
+    if (!mapMarkers || !mapMarkers.markers) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Could not retrieve map markers' 
+      });
+    }
+    
+    // Get the shop prefix from query parameter or default to empty
+    const shopPrefix = req.query.prefix || '';
+    
+    // Get item database
+    const itemDb = require('./services/itemDatabase');
+    
+    // Filter for vending machines only
+    const vendingMachines = mapMarkers.markers
+      .filter(marker => marker.type === 3 || marker.type === "VendingMachine")
+      .map(vm => {
+        // Enrich sell orders with item names and images
+        const enrichedSellOrders = (vm.sellOrders || []).map(order => {
+          // Get item info for the item being sold
+          const sellingItem = itemDb.getItemById(order.itemId) || { 
+            id: order.itemId,
+            name: `Unknown Item (${order.itemId})`,
+            imageUrl: '/img/items/unknown.png'
+          };
+          
+          // Get item info for the currency
+          const currencyItem = itemDb.getItemById(order.currencyId) || {
+            id: order.currencyId,
+            name: `Unknown Item (${order.currencyId})`,
+            imageUrl: '/img/items/unknown.png'
+          };
+          
+          return {
+            sellingItem: {
+              id: sellingItem.id,
+              name: sellingItem.name,
+              imageUrl: `/img/items/${order.itemId}.png`,
+              amount: order.quantity,
+              condition: order.itemCondition,
+              maxCondition: order.itemConditionMax
+            },
+            currencyItem: {
+              id: currencyItem.id,
+              name: currencyItem.name,
+              imageUrl: `/img/items/${order.currencyId}.png`,
+              amount: order.costPerItem
+            },
+            amountInStock: order.amountInStock || 0,
+            originalOrder: order // Keep original data for reference
+          };
+        });
+        
+        return {
+          id: vm.id,
+          name: vm.name,
+          location: {
+            x: vm.x,
+            y: vm.y
+          },
+          sellOrders: enrichedSellOrders,
+          isPlayerOwned: vm.name && vm.name.toLowerCase().includes(shopPrefix.toLowerCase())
+        };
+      });
+    
+    // Split into your shops and competitor shops
+    const yourShops = vendingMachines.filter(vm => vm.isPlayerOwned);
+    const competitorShops = vendingMachines.filter(vm => !vm.isPlayerOwned);
+    
+    // Return all vending machines at once
+    return res.json({
+      success: true,
+      data: {
+        yourShops,
+        competitorShops,
+        allShops: vendingMachines
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching vending machines:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error' 
+    });
+  }
+});
+
+// We can keep the individual endpoint too for specific lookups
+app.get('/api/rustplus/vendingMachine/:id', async (req, res) => {
+  try {
+    // Get the vending machine ID from request parameters
+    const vendingMachineId = parseInt(req.params.id);
+    
+    // Get access to your rustplus instance
+    const rustplus = rustplusService;
+    
+    // Check connection status from the service
+    const status = rustplusService.getStatus();
+    if (!status.connected) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Not connected to Rust+' 
+      });
+    }
+    
+    // Use cached map markers instead of making a new request each time
+    const mapMarkers = rustplusService.getCachedMapMarkers();
+    
+    if (!mapMarkers || !mapMarkers.markers) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Could not retrieve map markers' 
+      });
+    }
+    
+    // Filter for vending machines (type 3) and find the matching ID
+    const vendingMachine = mapMarkers.markers
+      .filter(marker => marker.type === 3 || marker.type === "VendingMachine")
+      .find(vm => vm.id === vendingMachineId);
+    
+    if (!vendingMachine) {
+      return res.status(404).json({ 
+        success: false, 
+        error: 'Vending machine not found' 
+      });
+    }
+    
+    // Return the vending machine data
+    return res.json({
+      success: true,
+      data: {
+        id: vendingMachine.id,
+        name: vendingMachine.name,
+        location: {
+          x: vendingMachine.x,
+          y: vendingMachine.y
+        },
+        sellOrders: vendingMachine.sellOrders || []
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching vending machine:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error' 
+    });
+  }
+});
+
 // Start server
 server.listen(3001, () => {
     console.log('Server running on port 3001');

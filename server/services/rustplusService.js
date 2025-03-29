@@ -8,7 +8,8 @@ let connectionStatus = {
   connected: false,
   lastConnected: null,
   lastError: null,
-  serverInfo: null
+  serverInfo: null,
+  mapMarkers: null
 };
 let checkSubscriptionInterval = null;
 const CHECK_INTERVAL = 10000; // Check every 10 seconds
@@ -69,28 +70,7 @@ function setupEventListeners() {
   if (!rustplusInstance) return;
   
   // Connection established
-  rustplusInstance.on('connected', async () => {
-    console.log('Connected to Rust+ server');
-    
-    connectionStatus.connected = true;
-    connectionStatus.lastConnected = new Date();
-    connectionStatus.lastError = null;
-    
-    try {
-      // Fetch server info
-      const serverInfo = await getServerInfo();
-      connectionStatus.serverInfo = serverInfo;
-    } catch (error) {
-      console.error('Failed to get server info:', error);
-    }
-    
-    // Start periodic subscription check
-    startSubscriptionCheck();
-    
-    // Emit connection status to clients
-    const io = socketInstance.getIO();
-    io.emit('rustplusStatus', getStatus());
-  });
+  rustplusInstance.on('connected', onConnected);
   
   // Connection closed
   rustplusInstance.on('disconnected', () => {
@@ -131,6 +111,35 @@ function setupEventListeners() {
       handleBroadcast(message.broadcast);
     }
   });
+}
+
+/**
+ * Handle successful connection
+ */
+function onConnected() {
+  console.log('Connected to Rust+ server');
+  connectionStatus.connected = true;
+  connectionStatus.lastConnected = new Date();
+  
+  // Emit connection status to clients
+  socketInstance.getIO().emit('rustplus:status', getStatus());
+  
+  // Fetch map markers immediately after connecting
+  console.log('Fetching initial map markers...');
+  getMapMarkers()
+    .then(markers => {
+      console.log(`Initial map markers fetched: ${markers.markers.length} markers`);
+    })
+    .catch(err => {
+      console.error('Error fetching initial map markers:', err);
+    });
+  
+  // Setup automatic refresh of subscription status
+  if (!checkSubscriptionInterval) {
+    checkSubscriptionInterval = setInterval(() => {
+      checkSubscription();
+    }, CHECK_INTERVAL);
+  }
 }
 
 /**
@@ -299,7 +308,8 @@ function getStatus() {
     connected: connectionStatus.connected,
     lastConnected: connectionStatus.lastConnected,
     lastError: connectionStatus.lastError,
-    serverInfo: connectionStatus.serverInfo
+    serverInfo: connectionStatus.serverInfo,
+    mapMarkers: connectionStatus.mapMarkers
   };
 }
 
@@ -369,43 +379,28 @@ async function sendTeamMessage(message) {
 async function getMapMarkers() {
   return new Promise((resolve, reject) => {
     if (!rustplusInstance || !connectionStatus.connected) {
-      reject(new Error('Not connected to Rust+ server'));
-      return;
+      return reject(new Error('Not connected to Rust+'));
     }
-    
-    rustplusInstance.getMapMarkers((message) => {
-      console.log('Received map markers response');
-      if (message.response && message.response.mapMarkers) {
-        const markers = message.response.mapMarkers.markers || [];
-        console.log(`Found ${markers.length} total markers`);
-        
-        // Count vending machines
-        const vendingMachines = markers.filter(m => m.type === 3);
-        console.log(`Found ${vendingMachines.length} vending machines`);
-        
-        // Log marker types for debugging
-        const markerTypes = {};
-        markers.forEach(marker => {
-          markerTypes[marker.type] = (markerTypes[marker.type] || 0) + 1;
-        });
-        console.log('Marker types distribution:', markerTypes);
-        
-        // Log a sample of vending machine names
-        if (vendingMachines.length > 0) {
-          console.log('Sample vending machine names:');
-          vendingMachines.slice(0, 3).forEach(vm => {
-            console.log(` - ${vm.name}`);
-            console.log('  Full marker data:', JSON.stringify(vm));
-          });
+
+    try {
+      rustplusInstance.getMapMarkers((message) => {
+        if (message && message.response && message.response.mapMarkers) {
+          // Store complete response in the connection status for caching
+          connectionStatus.mapMarkers = message.response.mapMarkers;
+          
+          // Log the number of markers for debugging
+          console.log(`Cached ${message.response.mapMarkers.markers.length} map markers`);
+          
+          resolve(message.response.mapMarkers);
+        } else {
+          console.log('Failed to get map markers - response format unexpected');
+          console.log(JSON.stringify(message));
+          reject(new Error('Failed to get map markers'));
         }
-        
-        resolve(message.response.mapMarkers);
-      } else {
-        console.log('Failed to get map markers - response format unexpected');
-        console.log(JSON.stringify(message));
-        reject(new Error('Failed to get map markers'));
-      }
-    });
+      });
+    } catch (error) {
+      reject(error);
+    }
   });
 }
 
@@ -439,6 +434,33 @@ async function calculateUndercutPrices(itemIds) {
   return suggestions;
 }
 
+/**
+ * Get the cached map markers
+ */
+function getCachedMapMarkers() {
+  // Return the cached map markers if they exist
+  if (connectionStatus.mapMarkers && connectionStatus.mapMarkers.markers) {
+    return connectionStatus.mapMarkers;
+  }
+  
+  // If no cached markers, try to fetch them now
+  console.log('No cached map markers found, fetching now...');
+  if (connectionStatus.connected) {
+    getMapMarkers()
+      .then(markers => {
+        console.log(`Fetched ${markers.markers.length} map markers on demand`);
+        return markers;
+      })
+      .catch(err => {
+        console.error('Error fetching map markers on demand:', err);
+        return { markers: [] };
+      });
+  }
+  
+  // Return an empty structure if no cached data exists
+  return { markers: [] };
+}
+
 module.exports = {
   initializeRustPlus,
   getStatus,
@@ -447,5 +469,6 @@ module.exports = {
   sendTeamMessage,
   checkSubscription,
   getMapMarkers,
-  calculateUndercutPrices
+  calculateUndercutPrices,
+  getCachedMapMarkers
 }; 
