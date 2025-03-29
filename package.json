@@ -3,39 +3,35 @@
   "version": "0.0.0",
   "scripts": {
     "devclient": "cross-env NODE_OPTIONS='--no-warnings' vite",
-    "devserver": "nodemon ./server/server.js --ignore 'server/*.json'",
+    "devserver": "nodemon ./server/server.js",
     "dev": "concurrently \"npm run devclient\" \"npm run devserver\"",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@liamcottle/rustplus.js": "^2.5.0",
+    "@liamcottle/push-receiver": "^0.0.3",
+    "@liamcottle/rustplus.js": "git+https://github.com/JulianMa/rustplus.js.git#9f87ea17f3d330c23615757130855590ad84ac22",
     "@mdi/font": "7.0.96",
+    "axios": "^1.6.7",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
     "roboto-fontface": "^0.10.0",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
-    "vue": "^3.3.0",
-    "vuetify": "^3.7.19",
-    "express": "^4.18.2",
-    "cors": "^2.8.5",
     "uuid": "^9.0.1",
-    "axios": "^1.6.7",
-    "@liamcottle/push-receiver": "^0.0.3"
+    "vue": "^3.3.0",
+    "vue-router": "^4.0.13",
+    "vuetify": "^3.7.19"
   },
   "devDependencies": {
-    "@liamcottle/rustplus.js": "^2.5.0",
     "@vitejs/plugin-vue": "^4.6.2",
     "concurrently": "^9.1.2",
     "cross-env": "^7.0.3",
     "nodemon": "^3.1.9",
-    "roboto-fontface": "^0.10.0",
     "sass": "^1.86.0",
-    "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1",
     "unplugin-fonts": "^1.3.1",
     "unplugin-vue-components": "^0.26.0",
     "vite": "^5.4.15",
-    "vite-plugin-vuetify": "^2.1.0",
-    "vuetify": "^3.7.19"
+    "vite-plugin-vuetify": "^2.1.0"
   }
 }

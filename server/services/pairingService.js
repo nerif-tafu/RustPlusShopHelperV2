@@ -3,6 +3,8 @@ const { v4: uuidv4 } = require('uuid');
 const AndroidFCM = require('@liamcottle/push-receiver/src/android/fcm');
 const PushReceiverClient = require("@liamcottle/push-receiver/src/client");
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const FCM_CONFIG = {
     apiKey: "AIzaSyB5y2y-Tzqb4-I4Qnlsh_9naYv_TD8pCvY",
@@ -49,16 +51,92 @@ async function registerWithRustPlus(authToken) {
     try {
         // Generate a new timestamp for this pairing session
         pairingRequestTimestamp = Date.now();
+
+        // Check if we already have valid FCM credentials and Expo token
+        const rpDataPath = path.join(__dirname, '..', 'RPData.json');
+        let fcmCredentials, expoPushToken;
+
+        if (fs.existsSync(rpDataPath)) {
+            try {
+                const existingData = JSON.parse(fs.readFileSync(rpDataPath, 'utf8'));
+                
+                if (existingData.fcmCredentials && existingData.expoToken) {
+                    console.log('Using existing FCM credentials and Expo token');
+                    fcmCredentials = existingData.fcmCredentials;
+                    expoPushToken = existingData.expoToken;
+                    
+                    // Store for later reuse
+                    currentFcmCredentials = fcmCredentials;
+                    
+                    // Skip to registration with Rust+
+                    console.log('Skipping FCM and Expo registration steps');
+                    pairingStatus = {
+                        ready: true,
+                        message: 'Using existing credentials. Ready for pairing!'
+                    };
+                    
+                    // Go directly to registration with existing tokens
+                    const registerData = {
+                        AuthToken: authToken,
+                        DeviceId: 'rustplus.js',
+                        PushKind: 3,
+                        PushToken: expoPushToken
+                    };
+
+                    await axios.post('https://companion-rust.facepunch.com/api/push/register', registerData, {
+                        allowAbsoluteUrls: true,
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Accept': 'application/json'
+                        }
+                    });
+
+                    console.log('Registration successful with existing tokens');
+                    
+                    // Skip to listening for pairing
+                    console.log('Waiting for pairing notification from Rust game...');
+                    const serverInfo = await listenForPairingNotification(fcmCredentials, pairingRequestTimestamp);
+                    console.log('Pairing completed successfully');
+                    
+                    const serverData = {
+                        serverName: serverInfo.name,
+                        serverIP: serverInfo.ip,
+                        appPort: serverInfo.port,
+                        steamID: serverInfo.playerId,
+                        playerToken: serverInfo.playerToken,
+                        lastPairingData: serverInfo,
+                        pairingDate: new Date().toISOString(),
+                        fcmCredentials: fcmCredentials,
+                        expoToken: expoPushToken
+                    };
+                    
+                    // Save the server data to RPData.json
+                    fs.writeFileSync(rpDataPath, JSON.stringify(serverData, null, 2));
+                    
+                    return {
+                        pairingData: serverInfo,
+                        fcmCredentials
+                    };
+                }
+            } catch (error) {
+                console.log('Error reading existing credentials, will generate new ones:', error.message);
+                // Continue with new registration below
+            }
+        }
+
+        // Generate a new timestamp for this pairing session
+        pairingRequestTimestamp = Date.now();
         
         console.log('Initializing FCM for pairing...');
-        const { fcmCredentials } = await initializePairing();
+        const result = await initializePairing();
+        fcmCredentials = result.fcmCredentials;
         
         // Store for later reuse
         currentFcmCredentials = fcmCredentials;
 
         // Get Expo Push Token
         console.log('Getting Expo Push Token...');
-        const expoPushToken = await getExpoPushToken(fcmCredentials.fcm.token);
+        expoPushToken = await getExpoPushToken(fcmCredentials.fcm.token);
         
         // Register with Rust+ using Expo token
         console.log('Registering with Rust+...');
@@ -83,6 +161,24 @@ async function registerWithRustPlus(authToken) {
         console.log('Waiting for pairing notification from Rust game...');
         const serverInfo = await listenForPairingNotification(fcmCredentials, pairingRequestTimestamp);
         console.log('Pairing completed successfully');
+        
+        const serverData = {
+            serverName: serverInfo.name,
+            serverIP: serverInfo.ip,
+            appPort: serverInfo.port,
+            steamID: serverInfo.playerId,
+            playerToken: serverInfo.playerToken,
+            lastPairingData: serverInfo,
+            pairingDate: new Date().toISOString(),
+            fcmCredentials: fcmCredentials,
+            expoToken: expoPushToken
+        };
+        
+        // Save the server data to RPData.json
+        fs.writeFileSync(
+            path.join(__dirname, '..', 'RPData.json'),
+            JSON.stringify(serverData, null, 2)
+        );
         
         return {
             pairingData: serverInfo,
@@ -237,7 +333,33 @@ async function listenForPairingNotification(fcmCredentials, requestTimestamp) {
 }
 
 async function restartPairingListener() {
-    if (!currentFcmCredentials) {
+    // Check for saved credentials first in RPData.json
+    const rpDataPath = path.join(__dirname, '..', 'RPData.json');
+    let fcmCredentialsToUse = null;
+    
+    if (fs.existsSync(rpDataPath)) {
+        try {
+            const existingData = JSON.parse(fs.readFileSync(rpDataPath, 'utf8'));
+            
+            if (existingData.fcmCredentials) {
+                console.log('Using existing FCM credentials for pairing restart');
+                fcmCredentialsToUse = existingData.fcmCredentials;
+                
+                // Also update the global currentFcmCredentials for future use
+                currentFcmCredentials = fcmCredentialsToUse;
+            }
+        } catch (error) {
+            console.log('Error reading existing credentials:', error.message);
+        }
+    }
+    
+    // Fall back to in-memory credentials if file reading failed
+    if (!fcmCredentialsToUse && currentFcmCredentials) {
+        fcmCredentialsToUse = currentFcmCredentials;
+    }
+    
+    // Still no credentials? Error out
+    if (!fcmCredentialsToUse) {
         throw new Error('No FCM credentials available, please start the pairing process again');
     }
     
@@ -254,7 +376,7 @@ async function restartPairingListener() {
     // Create a new promise to handle the pairing
     const pairingPromise = new Promise((resolve, reject) => {
         // Start listening for pairing notification with our timestamp filter
-        listenForPairingNotification(currentFcmCredentials, pairingRequestTimestamp)
+        listenForPairingNotification(fcmCredentialsToUse, pairingRequestTimestamp)
             .then(serverInfo => {
                 console.log('Pairing completed after restart');
                 
@@ -267,9 +389,32 @@ async function restartPairingListener() {
                         success: true,
                         data: {
                             pairingData: serverInfo,
-                            fcmCredentials: currentFcmCredentials
+                            fcmCredentials: fcmCredentialsToUse
                         }
                     });
+                    
+                    // Save the updated pairing data
+                    if (fs.existsSync(rpDataPath)) {
+                        try {
+                            const existingData = JSON.parse(fs.readFileSync(rpDataPath, 'utf8'));
+                            
+                            // Update with new server info while keeping the credentials
+                            const serverData = {
+                                ...existingData,
+                                serverName: serverInfo.name,
+                                serverIP: serverInfo.ip,
+                                appPort: serverInfo.port,
+                                steamID: serverInfo.playerId,
+                                playerToken: serverInfo.playerToken,
+                                lastPairingData: serverInfo,
+                                pairingDate: new Date().toISOString()
+                            };
+                            
+                            fs.writeFileSync(rpDataPath, JSON.stringify(serverData, null, 2));
+                        } catch (error) {
+                            console.log('Error saving new server data:', error.message);
+                        }
+                    }
                     
                     resolve({
                         success: true,
