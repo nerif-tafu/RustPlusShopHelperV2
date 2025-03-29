@@ -1,96 +1,124 @@
+const express = require('express');
 const { Server } = require("socket.io");
-const io = new Server(3001, {
-  cors: {
-    origin: ["http://localhost:3000"]
-  }
+const cors = require('cors');
+const pairingService = require('./services/pairingService');
+
+// Create Express app
+const app = express();
+
+// Configure CORS
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? false
+    : "http://localhost:3000"
+}));
+
+app.use(express.json());
+
+// Add CORS headers
+app.use((req, res, next) => {
+    res.header('Cross-Origin-Opener-Policy', 'unsafe-none');
+    next();
 });
 
-let sockets = [];
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Express error:', err);
+    res.status(500).json({ error: err.message });
+});
 
-io.on("connection", (socket) => {
-  console.log("Client connected to WS")
+// Create HTTP server
+const server = require('http').createServer(app);
 
-  socket.on("disconnect", () => {
-    sockets = sockets.filter( _socket => _socket !== socket );
-  });
-
-  sockets.push(socket);
-  serverConnectionUpdate();
-
-  socket.on('clntNewServer', data => {
-    connectToRustPlus(data.serverIP, data.appPort, data.steamID, data.playerToken);
-  });
-})
-
-function serverConnectionUpdate(){
-  sockets.forEach(socket => {
-    socket.emit("svrRPConnect", lastServerStatus);
-  });
-}
-
-// This is not used for processing the data, mearly as a ping-pong system.
-setInterval(() => {
-  if (rustplus?.websocket?.readyState) {
-    rustplus.sendRequestAsync({
-      getMapMarkers: {},
-    }, 5000).catch(() => {
-      rustplus.disconnect();
-    })
-  }
-
-  io.emit('svrPingPong', {"connectionStatus":(rustplus?.websocket?.readyState), "date": new Date }) 
-}, 5000)
-
-/// RUST PLUS
-
-const RustPlus = require("@liamcottle/rustplus.js");
-let rustplus;
-let lastServerStatus = { connectionStatus: 'disconnected', serverName: '' };
-
-connectToRustPlus("190.21.58.40", "28083", "76561198056409776", "-1057216245");
-
-// Server Init
-function connectToRustPlus(serverIP, appPort, steamID, playerToken){
-  if (rustplus?.isConnected()) { rustplus.disconnect() }
-  rustplus = new RustPlus(serverIP, appPort, steamID, playerToken);
-  setupRustPlusListeners();
-  rustplus.connect();
-  console.log('Starting connection to', serverIP);
-}
-
-function setupRustPlusListeners (){
-  lastServerStatus = { connectionStatus: 'disconnected', serverName: '' };
-
-  rustplus.on("connecting", () => {
-    console.log('Connecting to Rust+ server.')
-    lastServerStatus = { connectionStatus: 'connecting', serverName: 'cl.hophop.tech' };
-    serverConnectionUpdate();
-  });
-
-  rustplus.on("connected", () => {
-    console.log('Connected to Rust+ server.')
-    lastServerStatus = { connectionStatus: 'connected', serverName: 'cl.hophop.tech' };
-    serverConnectionUpdate();
-  });
-
-  rustplus.on("disconnected", () => {
-    console.log('Disconnected from Rust+ server.')
-    lastServerStatus = { connectionStatus: 'error', serverName: 'cl.hophop.tech' };
-    serverConnectionUpdate();
-  });
-
-  rustplus.on("error", (error) => {
-    if ( error.code === 'ETIMEDOUT' ) {
-      rustplus.disconnect();
-      console.log('Error from Rust+ server.')
-      lastServerStatus = { connectionStatus: 'error', serverName: 'cl.hophop.tech' };
-      serverConnectionUpdate();
+// Initialize Socket.IO
+const io = new Server(server, {
+    cors: {
+        origin: process.env.NODE_ENV === 'production' 
+            ? false 
+            : "http://localhost:3000",
+        methods: ["GET", "POST"]
     }
-  });
+});
 
-  rustplus.on("message", message => {
-    if ( message.response && message.response.mapMarkers ) {
-      console.log(message.response.mapMarkers);
+// Pairing endpoints
+app.post('/api/pairing/initialize', async (req, res) => {
+    try {
+        const pairingData = await pairingService.initializePairing();
+        res.json(pairingData);
+    } catch (error) {
+        console.error('Initialization failed:', error);
+        res.status(500).json({ error: 'Failed to initialize pairing' });
     }
-  });
-}
+});
+
+app.post('/api/pairing/register', async (req, res) => {
+    try {
+        console.log('Received pairing request...');
+        const { authToken } = req.body;
+        console.log('Auth token received:', authToken.substring(0, 10) + '...');
+
+        const result = await pairingService.registerWithRustPlus(authToken);
+        console.log('Full registration process completed:', result);
+
+        res.json({ 
+            success: true, 
+            message: 'Successfully paired with Rust+',
+            data: result
+        });
+    } catch (error) {
+        console.error('Registration failed:', error.message);
+        res.status(500).json({ success: false, message: error.message });
+    }
+});
+
+app.post('/api/pairing/listen', async (req, res) => {
+    try {
+        const { fcmCredentials } = req.body;
+        const notification = await pairingService.listenForPairingNotification(fcmCredentials);
+        res.json(notification);
+    } catch (error) {
+        console.error('Listening failed:', error);
+        res.status(500).json({ error: 'Failed to receive pairing notification' });
+    }
+});
+
+// Callback endpoint for Steam auth
+app.get('/callback', async (req, res) => {
+    try {
+        console.log('Callback received with params:', req.query);
+        const authToken = req.query.token;
+        const steamId = req.query.steamId;
+        
+        if (!authToken) {
+            console.error('Token missing from callback');
+            res.status(400).send('Token missing from request!');
+            return;
+        }
+
+        res.send(`
+            <html>
+                <body>
+                    <script>
+                        console.log('Sending auth data to opener');
+                        window.opener.postMessage({
+                            type: 'RUST_PLUS_AUTH',
+                            token: '${authToken}',
+                            steamId: '${steamId || ''}'
+                        }, window.location.origin);
+                        window.close();
+                    </script>
+                    Steam Account successfully linked with Rust+. You can close this window.
+                </body>
+            </html>
+        `);
+    } catch (error) {
+        console.error('Callback error:', error);
+        res.status(500).send('Failed to process callback');
+    }
+});
+
+// Start server
+server.listen(3001, () => {
+    console.log('Server running on port 3001');
+    console.log('Ready to receive pairing requests...');
+});
