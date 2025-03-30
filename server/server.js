@@ -468,8 +468,9 @@ app.get('/api/rustplus/vendingMachines', async (req, res) => {
   try {
     // Get access to rustplus service
     const rustplus = rustplusService;
+    const shopPrefix = req.query.prefix || '';
     
-    // Check connection status
+    // Check if we're connected to Rust+
     const status = rustplusService.getStatus();
     if (!status.connected) {
       return res.status(400).json({ 
@@ -478,7 +479,7 @@ app.get('/api/rustplus/vendingMachines', async (req, res) => {
       });
     }
     
-    // Use cached map markers instead of making a new request
+    // Get vending machine data
     const mapMarkers = rustplusService.getCachedMapMarkers();
     
     if (!mapMarkers || !mapMarkers.markers) {
@@ -488,52 +489,22 @@ app.get('/api/rustplus/vendingMachines', async (req, res) => {
       });
     }
     
-    // Get the shop prefix from query parameter or default to empty
-    const shopPrefix = req.query.prefix || '';
-    
-    // Get item database
-    const itemDb = require('./services/itemDatabase');
-    
-    // Filter for vending machines only
+    // Filter for only vending machines (marker type 3)
     const vendingMachines = mapMarkers.markers
       .filter(marker => marker.type === 3 || marker.type === "VendingMachine")
       .map(vm => {
-        // Enrich sell orders with item names and images
-        const enrichedSellOrders = (vm.sellOrders || []).map(order => {
-          // Get item info for the item being sold
-          const sellingItem = itemDb.getItemById(order.itemId) || { 
-            id: order.itemId,
-            name: `Unknown Item (${order.itemId})`,
-            imageUrl: '/img/items/unknown.png'
-          };
-          
-          // Get item info for the currency
-          const currencyItem = itemDb.getItemById(order.currencyId) || {
-            id: order.currencyId,
-            name: `Unknown Item (${order.currencyId})`,
-            imageUrl: '/img/items/unknown.png'
-          };
+        // Cleanup and enhance the vending machine data with item info from our database
+        const sellOrders = (vm.sellOrders || []).map(order => {
+          // Use rustAssetManager to get item details
+          const itemDetails = rustAssetManager.getItemById(order.itemId);
           
           return {
-            sellingItem: {
-              id: sellingItem.id,
-              name: sellingItem.name,
-              imageUrl: `/img/items/${order.itemId}.png`,
-              amount: order.quantity,
-              condition: order.itemCondition,
-              maxCondition: order.itemConditionMax
-            },
-            currencyItem: {
-              id: currencyItem.id,
-              name: currencyItem.name,
-              imageUrl: `/img/items/${order.currencyId}.png`,
-              amount: order.costPerItem
-            },
-            amountInStock: order.amountInStock || 0,
-            originalOrder: order // Keep original data for reference
+            ...order,
+            itemDetails: itemDetails || { name: `Unknown Item (${order.itemId})` }
           };
         });
         
+        // Return the processed vending machine
         return {
           id: vm.id,
           name: vm.name,
@@ -541,7 +512,7 @@ app.get('/api/rustplus/vendingMachines', async (req, res) => {
             x: vm.x,
             y: vm.y
           },
-          sellOrders: enrichedSellOrders,
+          sellOrders: sellOrders,
           isPlayerOwned: vm.name && vm.name.toLowerCase().includes(shopPrefix.toLowerCase())
         };
       });

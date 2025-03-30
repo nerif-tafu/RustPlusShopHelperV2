@@ -94,38 +94,67 @@
     <!-- Undercut items list -->
     <v-row v-else>
       <v-col>
-        <h3>Items Being Undercut</h3>
-        <v-card v-for="item in undercutItems" :key="`${item.itemId}-${item.myShop.id}`" class="mb-4">
-          <v-card-text>
-            <v-row>
-              <v-col cols="12" sm="2">
-                <v-img 
-                  :src="item.itemImage || '/img/items/unknown.png'" 
-                  :alt="item.itemName"
-                  @error="$event.target.src = '/img/items/unknown.png'"
-                  contain
-                  height="64"
-                ></v-img>
-              </v-col>
-              <v-col cols="12" sm="10">
-                <h4>{{ item.itemName || 'Unknown Item' }}</h4>
-                <p>Your Price: {{ item.yourPrice }}</p>
-                <p>Competitor Price: {{ item.competitorPrice }}</p>
-                <p>Difference: {{ item.priceDifference }} ({{ Math.round(item.percentageDifference) }}%)</p>
-                <p>Your Shop: {{ item.myShop.name }}</p>
-                <p>Competitor Shop: {{ item.competitorShop.name }}</p>
-              </v-col>
-            </v-row>
+        <h3 class="mb-4">Items Being Undercut</h3>
+        <v-card v-for="item in undercutItems" :key="`${item.itemId}-${item.myShop.id}`" class="mb-5" theme="dark">
+          <v-card-title class="text-primary">{{ item.myShop.name }}</v-card-title>
+
+          <div class="pa-2">
+            <v-table density="compact">
+              <thead>
+                <tr>
+                  <th class="text-left">Type</th>
+                  <th class="text-left">Trade</th>
+                  <th class="text-right">Ratio</th>
+                </tr>
+              </thead>
+              <tbody>
+                <!-- Your price row -->
+                <tr>
+                  <td>Your price</td>
+                  <td>
+                    <div class="d-flex align-center">
+                      <v-img :src="item.itemImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
+                      ×{{ getQuantityFromOrder(item.myOrder) }}
+                      <v-icon class="mx-2">mdi-arrow-right</v-icon>
+                      <v-img :src="item.currencyImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
+                      ×{{ item.yourPrice }}
+                    </div>
+                  </td>
+                  <td class="text-right font-weight-bold">{{ calculateRatio(item.yourPrice, getQuantityFromOrder(item.myOrder)) }}:1</td>
+                </tr>
+                
+                <!-- Competitor rows -->
+                <tr v-for="competitor in item.competitors" :key="competitor.shopId">
+                  <td class="text-purple-lighten-3">{{ competitor.shopName }}</td>
+                  <td>
+                    <div class="d-flex align-center">
+                      <v-img :src="item.itemImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
+                      ×{{ competitor.quantity || 1 }}
+                      <v-icon class="mx-2">mdi-arrow-right</v-icon>
+                      <v-img :src="item.currencyImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
+                      ×{{ competitor.price }}
+                    </div>
+                  </td>
+                  <td class="text-right font-weight-bold">{{ calculateRatio(competitor.price, competitor.quantity || 1) }}:1</td>
+                </tr>
+              </tbody>
+            </v-table>
+          </div>
+
+          <!-- Suggestion -->
+          <v-card-text class="text-center text-cyan-accent-2">
+            Change your cost to {{ getLowestCompetitorPrice(item) - 1 }} {{ item.currencyName }} or less.
           </v-card-text>
         </v-card>
       </v-col>
     </v-row>
   </v-container>
-  </template>
-  
-  <script setup>
+</template>
+
+<script setup>
 import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
 import { io } from 'socket.io-client';
+import axios from 'axios';
 
 // State variables
 const shopPrefix = ref(localStorage.getItem('shopPrefix') || '');
@@ -133,6 +162,7 @@ const isLoading = ref(true);
 const allVendingMachines = ref([]);
 const undercutItems = ref([]);
 const rustplusStatus = ref({ connected: false });
+const rustItemsCache = ref({});
 
 // Create computed properties for filtering shops
 const myShops = computed(() => {
@@ -191,12 +221,9 @@ async function loadVendingMachines() {
     console.log('Vending machines API response:', result);
     
     if (result.success) {
-      // The data now comes pre-split from the server
-      const { yourShops, competitorShops, allShops } = result.data;
-      
-      // Update state
-      allVendingMachines.value = allShops;
-      console.log(`Loaded ${allShops.length} total shops`);
+      // Update state with the data from the server
+      allVendingMachines.value = result.data.allShops;
+      console.log(`Loaded ${allVendingMachines.value.length} total shops`);
       
       // Find items being undercut - this can now be simplified
       findUndercutItemsFromEnrichedData();
@@ -212,69 +239,154 @@ async function loadVendingMachines() {
 
 // Updated function to find undercut items from pre-enriched data
 function findUndercutItemsFromEnrichedData() {
-  undercutItems.value = [];
-  
-  // No processing needed if no shops found
-  if (myShops.value.length === 0 || competitorShops.value.length === 0) {
-    return;
-  }
-  
-  // For each of your shops
-  myShops.value.forEach(myShop => {
-    // For each item you're selling
-    if (myShop.sellOrders && myShop.sellOrders.length > 0) {
-      myShop.sellOrders.forEach(myOrder => {
-        // The data is now enriched, so we can use direct properties
-        const myItemId = myOrder.sellingItem.id;
-        const myPrice = myOrder.currencyItem.amount;
+  try {
+    console.log('Finding undercut items from enriched data...');
+    
+    // Reset any previous results
+    undercutItems.value = [];
+    
+    // First, extract all the items you are selling
+    const mySellingItems = [];
+    
+    myShops.value.forEach(shop => {
+      if (!shop.sellOrders) return;
+      
+      shop.sellOrders.forEach(myOrder => {
+        // Debug
+        console.log('Processing my order:', myOrder);
         
-        // Find the same item in competitor shops
-        let lowestCompetitorPrice = Infinity;
-        let competitorShopWithLowestPrice = null;
-        let competitorOrder = null;
+        // Use the new data structure
+        const itemId = myOrder.itemId;
+        const currencyId = myOrder.currencyId;
+        const pricePerItem = myOrder.costPerItem;
         
-        competitorShops.value.forEach(competitorShop => {
-          if (competitorShop.sellOrders) {
-            competitorShop.sellOrders.forEach(order => {
-              // If selling the same item
-              if (order.sellingItem.id === myItemId && order.currencyItem.amount < lowestCompetitorPrice) {
-                lowestCompetitorPrice = order.currencyItem.amount;
-                competitorShopWithLowestPrice = competitorShop;
-                competitorOrder = order;
-              }
-            });
-          }
+        mySellingItems.push({
+          itemId: itemId,
+          itemName: myOrder.itemDetails?.name || `Unknown Item (${itemId})`,
+          itemImage: myOrder.itemDetails?.image || '/img/items/unknown.png',
+          currencyId: currencyId,
+          currencyDetails: rustItemsCache.value[currencyId] || null,
+          currencyName: getCurrencyName(currencyId),
+          currencyImage: rustItemsCache.value[currencyId]?.image || '/img/items/unknown.png',
+          myPrice: pricePerItem,
+          myShopName: shop.name,
+          myShopId: shop.id,
+          quantity: myOrder.quantity,
+          myOrder: myOrder
         });
+      });
+    });
+    
+    console.log('My selling items:', mySellingItems);
+    
+    // Now check each of your items against competitor shops
+    mySellingItems.forEach(myItem => {
+      // Find all competing offers for this item
+      const competingOffers = [];
+      
+      competitorShops.value.forEach(shop => {
+        if (!shop.sellOrders) return;
         
-        // If found a competitor selling for less
-        if (competitorShopWithLowestPrice && lowestCompetitorPrice < myPrice) {
-          const priceDifference = myPrice - lowestCompetitorPrice;
-          const percentageDifference = (priceDifference / myPrice) * 100;
+        shop.sellOrders.forEach(theirOrder => {
+          // Skip if this isn't the same item
+          if (theirOrder.itemId !== myItem.itemId) return;
+          // Skip if they're not selling for the same currency
+          if (theirOrder.currencyId !== myItem.currencyId) return;
+          
+          competingOffers.push({
+            shopName: shop.name,
+            shopId: shop.id,
+            price: theirOrder.costPerItem,
+            quantity: theirOrder.quantity,
+            order: theirOrder
+          });
+        });
+      });
+      
+      // Now check if any competing offers have lower prices
+      if (competingOffers.length > 0) {
+        console.log(`Found ${competingOffers.length} competing offers for ${myItem.itemName}`);
+        
+        // Sort competing offers by price (lowest first)
+        const sortedOffers = [...competingOffers].sort((a, b) => a.price - b.price);
+        
+        // Filter only the offers that are lower than your price
+        const undercuttingOffers = sortedOffers.filter(offer => offer.price < myItem.myPrice);
+        
+        // If any offers are undercutting you
+        if (undercuttingOffers.length > 0) {
+          const lowestOffer = undercuttingOffers[0]; // For calculating difference
+          const priceDiff = myItem.myPrice - lowestOffer.price;
+          const percentDiff = (priceDiff / myItem.myPrice) * 100;
           
           undercutItems.value.push({
-            itemId: myItemId,
-            itemName: myOrder.sellingItem.name,
-            itemImage: myOrder.sellingItem.imageUrl,
-            yourPrice: myPrice,
-            competitorPrice: lowestCompetitorPrice,
-            priceDifference: priceDifference,
-            percentageDifference: percentageDifference,
-            myShop: myShop,
-            competitorShop: competitorShopWithLowestPrice,
-            competitorOrder: competitorOrder,
-            suggestedPrice: Math.max(1, lowestCompetitorPrice - 1)
+            itemId: myItem.itemId,
+            itemName: myItem.itemName,
+            itemImage: myItem.itemImage,
+            yourPrice: myItem.myPrice,
+            // Instead of a single competitor, add all undercutting competitors
+            competitors: undercuttingOffers.map(offer => ({
+              shopId: offer.shopId,
+              shopName: offer.shopName,
+              price: offer.price,
+              quantity: offer.quantity
+            })),
+            priceDifference: priceDiff,
+            undercutPercent: percentDiff,
+            percentageDifference: percentDiff,  // For compatibility with template
+            myShop: {
+              id: myItem.myShopId,
+              name: myItem.myShopName
+            },
+            myOrder: myItem.myOrder,
           });
+          
+          console.log(`Item ${myItem.itemName} is being undercut! Your price: ${myItem.myPrice}, Their price: ${lowestOffer.price}`);
         }
-      });
-    }
-  });
+      }
+    });
+    
+    // Sort the results so that the most important undercutting is shown first
+    undercutItems.value.sort((a, b) => {
+      // First sort by undercut percentage (biggest undercutting first)
+      return b.undercutPercent - a.undercutPercent;
+    });
+    
+    console.log(`Found ${undercutItems.value.length} items being undercut`);
+  } catch (error) {
+    console.error('Error finding undercut items:', error);
+  }
+}
+
+// Helper function to get currency name from ID
+function getCurrencyName(currencyId) {
+  const itemDetails = rustItemsCache.value[currencyId];
+  if (itemDetails) return itemDetails.name;
   
-  // Sort by percentage difference (highest first)
-  undercutItems.value.sort((a, b) => b.percentageDifference - a.percentageDifference);
+  return `Unknown Currency (${currencyId})`;
+}
+
+// Add a function to load all items from the database
+async function loadItemDatabase() {
+  try {
+    const response = await axios.get('/api/items?all=true');
+    if (response.data.success && response.data.data.items) {
+      // Convert from object to lookup
+      const items = response.data.data.items;
+      for (const id in items) {
+        rustItemsCache.value[id] = items[id];
+      }
+      console.log(`Loaded ${Object.keys(rustItemsCache.value).length} items from database`);
+    }
+  } catch (error) {
+    console.error('Failed to load item database:', error);
+  }
 }
 
 // Load data on component mount
 onMounted(async () => {
+  // Add this call
+  await loadItemDatabase();
   // Then load vending machines
   loadVendingMachines();
   
@@ -289,4 +401,32 @@ onMounted(async () => {
     clearInterval(refreshInterval);
   });
 });
+
+// Simplify the handleImageError function
+function handleImageError(event) {
+  if (event && event.target) {
+    // Just use a simple fallback
+    event.target.src = '/img/items/unknown.png';
+  }
+}
+
+// Helper function to calculate trade ratio
+function calculateRatio(price, quantity) {
+  if (!quantity || quantity === 0) return '?';
+  // Return ratio rounded to nearest whole number
+  return Math.round(price / quantity);
+}
+
+// Helper function to get quantity from order
+function getQuantityFromOrder(order) {
+  return order?.quantity || 1;
+}
+
+// Helper function to get the lowest competitor price
+function getLowestCompetitorPrice(item) {
+  if (!item.competitors || item.competitors.length === 0) return 0;
+  return Math.min(...item.competitors.map(c => c.price));
+}
 </script>
+
+<!-- No custom CSS needed, using Vuetify's built-in classes -->
