@@ -5,9 +5,9 @@
  */
 
 // Plugins
-import { registerPlugins } from '@/plugins'
 import vuetify from './plugins/vuetify'
 import router from './router'
+import axios from 'axios'
 
 // Components
 import App from './App.vue'
@@ -17,7 +17,6 @@ import { createApp } from 'vue'
 
 const app = createApp(App)
 
-registerPlugins(app)
 app.use(vuetify)
 app.use(router)
 

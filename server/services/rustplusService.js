@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const RustPlus = require('@liamcottle/rustplus.js');
 const socketInstance = require('../socketInstance');
+const rustAssetManager = require('./RustAssetManager');
 
 let rustplusInstance = null;
 let connectionStatus = {
@@ -122,7 +123,9 @@ function onConnected() {
   connectionStatus.lastConnected = new Date();
   
   // Emit connection status to clients
-  socketInstance.getIO().emit('rustplus:status', getStatus());
+  const io = socketInstance.getIO();
+  io.emit('rustplusStatus', getStatus());
+  console.log('Emitted Rust+ connected status to clients');
   
   // Fetch map markers immediately after connecting
   console.log('Fetching initial map markers...');
@@ -461,6 +464,392 @@ function getCachedMapMarkers() {
   return { markers: [] };
 }
 
+/**
+ * Helper function to send progress updates to the client
+ */
+function updateProgress(io, progress, message) {
+  if (!io) return;
+  
+  console.log(`Progress ${progress}%: ${message}`);
+  io.emit('itemDatabaseProgress', { progress, message });
+}
+
+/**
+ * Ensure all required directories exist
+ */
+function ensureDirectoriesExist() {
+  console.log('Ensuring data directories exist...');
+  
+  const dirsToCreate = [DATA_DIR, IMAGES_DIR, RUST_CLIENT_PATH, STEAMCMD_DIR];
+  dirsToCreate.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      console.log(`Creating directory: ${dir}`);
+      fs.mkdirSync(dir, { recursive: true });
+    }
+  });
+}
+
+/**
+ * Check if SteamCMD is installed
+ */
+function isSteamCmdInstalled() {
+  return fs.existsSync(steamCmdExePath);
+}
+
+/**
+ * Download and install SteamCMD if not already installed
+ */
+async function installSteamCmd(io) {
+  if (isSteamCmdInstalled()) {
+    console.log('SteamCMD is already installed');
+    return;
+  }
+  
+  console.log('Installing SteamCMD...');
+  updateProgress(io, 15, 'Downloading SteamCMD...');
+  
+  try {
+    const downloadUrl = isWindows 
+      ? 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip' 
+      : 'https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz';
+    
+    const downloadPath = path.join(STEAMCMD_DIR, isWindows ? 'steamcmd.zip' : 'steamcmd.tar.gz');
+    
+    await new Promise((resolve, reject) => {
+      console.log(`Downloading from ${downloadUrl} to ${downloadPath}`);
+      const file = fs.createWriteStream(downloadPath);
+      
+      https.get(downloadUrl, (response) => {
+        response.pipe(file);
+        
+        file.on('finish', () => {
+          file.close();
+          resolve();
+        });
+      }).on('error', (err) => {
+        fs.unlink(downloadPath, () => {});
+        reject(err);
+      });
+    });
+    
+    updateProgress(io, 18, 'Extracting SteamCMD...');
+    
+    // Extract the file
+    if (isWindows) {
+      const AdmZip = require('adm-zip');
+      const zip = new AdmZip(downloadPath);
+      zip.extractAllTo(STEAMCMD_DIR, true);
+    } else {
+      const { execSync } = require('child_process');
+      execSync(`tar -xzf ${downloadPath} -C ${STEAMCMD_DIR}`);
+      execSync(`chmod +x ${path.join(STEAMCMD_DIR, 'steamcmd.sh')}`);
+    }
+    
+    // Clean up the downloaded file
+    fs.unlinkSync(downloadPath);
+    
+    console.log('SteamCMD installed successfully');
+  } catch (error) {
+    console.error('Failed to install SteamCMD:', error);
+    throw error;
+  }
+}
+
+/**
+ * Check if Steam is logged in
+ */
+async function checkSteamLogin() {
+  // Check if Steam is logged in by looking at Steam config
+  const steamConfigPath = process.env.APPDATA ? 
+    path.join(process.env.APPDATA, 'Steam', 'config', 'loginusers.vdf') : 
+    path.join(process.env.HOME, '.steam', 'config', 'loginusers.vdf');
+  
+  if (!fs.existsSync(steamConfigPath)) {
+    return { loggedIn: false, message: 'Steam config not found' };
+  }
+  
+  const content = fs.readFileSync(steamConfigPath, 'utf8');
+  const loggedIn = content.includes('"RememberPassword"		"1"');
+  
+  if (!loggedIn) {
+    return { loggedIn: false, message: 'Not logged in to Steam' };
+  }
+  
+  // Try to extract username
+  let username = '';
+  const usernameMatch = content.match(/"AccountName"\s+"([^"]+)"/);
+  if (usernameMatch && usernameMatch[1]) {
+    username = usernameMatch[1];
+  }
+  
+  return { loggedIn: true, username };
+}
+
+/**
+ * Run a SteamCMD command with authentication
+ */
+async function runSteamCmd(args, io, progressMessage, credentials = null) {
+  return new Promise((resolve, reject) => {
+    if (!isSteamCmdInstalled()) {
+      reject(new Error('SteamCMD not installed'));
+      return;
+    }
+    
+    // Add credentials if provided
+    const fullArgs = [...args];
+    if (credentials) {
+      // Insert login credentials at the beginning
+      fullArgs.unshift('+login', credentials.username, credentials.password);
+    } else {
+      // Try to use anonymous login if no credentials provided
+      fullArgs.unshift('+login', 'anonymous');
+    }
+    
+    console.log(`Running SteamCMD with command: ${steamCmdExePath} [ARGS HIDDEN]`);
+    
+    const steamCmdProcess = spawn(steamCmdExePath, fullArgs, { shell: true });
+    
+    let output = '';
+    
+    steamCmdProcess.stdout.on('data', (data) => {
+      const chunk = data.toString().trim();
+      output += chunk + '\n';
+      console.log(`SteamCMD stdout: ${chunk}`);
+      
+      if (io && progressMessage) {
+        // Extract a short preview of the output for progress message
+        const outputPreview = chunk.substring(0, 80) + (chunk.length > 80 ? '...' : '');
+        updateProgress(io, 30, `${progressMessage}: ${outputPreview}`);
+      }
+    });
+    
+    steamCmdProcess.stderr.on('data', (data) => {
+      const chunk = data.toString().trim();
+      console.error(`SteamCMD stderr: ${chunk}`);
+    });
+    
+    steamCmdProcess.on('close', (code) => {
+      console.log(`SteamCMD process exited with code ${code}`);
+      
+      // Check for login failures
+      if (output.includes('FAILED login')) {
+        reject(new Error('Steam login failed'));
+        return;
+      }
+      
+      if (code === 0) {
+        resolve(output);
+      } else {
+        reject(new Error(`SteamCMD process failed with code ${code}`));
+      }
+    });
+  });
+}
+
+/**
+ * Download Rust client files using SteamCMD
+ */
+async function downloadRustClient(io, credentials = null) {
+  updateProgress(io, 25, 'Checking for existing Rust client files...');
+  
+  // Check if we already have the required files
+  if (fs.existsSync(path.join(RUST_CLIENT_PATH, 'Bundles', 'items'))) {
+    const itemFiles = fs.readdirSync(path.join(RUST_CLIENT_PATH, 'Bundles', 'items'));
+    if (itemFiles.length > 0) {
+      console.log('Rust client files already downloaded');
+      return true;
+    }
+  }
+  
+  console.log('Downloading Rust client files...');
+  updateProgress(io, 30, 'Downloading Rust client files (this may take a while)...');
+  
+  try {
+    const args = [
+      `+force_install_dir "${RUST_CLIENT_PATH}"`,
+      '+app_update', RUST_APP_ID,
+      'validate',
+      '+quit'
+    ];
+    
+    await runSteamCmd(args, io, 'Downloading Rust client', credentials);
+    
+    console.log('Rust client files downloaded successfully');
+    updateProgress(io, 50, 'Rust client files downloaded successfully');
+    return true;
+  } catch (error) {
+    console.error('Error downloading Rust client files:', error);
+    updateProgress(io, 0, `Error downloading Rust client: ${error.message}`);
+    throw error;
+  }
+}
+
+/**
+ * Extract item data from Rust client files
+ */
+async function processRustAssets(io) {
+  return new Promise((resolve, reject) => {
+    try {
+      updateProgress(io, 60, 'Processing Rust item files...');
+      
+      const itemsDir = path.join(RUST_CLIENT_PATH, 'Bundles', 'items');
+      const items = {};
+      let itemCount = 0;
+      
+      // Read all JSON files in the items directory
+      const itemFiles = fs.readdirSync(itemsDir)
+        .filter(file => file.endsWith('.json'));
+      
+      console.log(`Found ${itemFiles.length} item files to process`);
+      
+      // Process each item file
+      itemFiles.forEach(file => {
+        try {
+          const filePath = path.join(itemsDir, file);
+          const fileData = fs.readFileSync(filePath, 'utf8');
+          const itemData = JSON.parse(fileData);
+          
+          if (!itemData.itemid) {
+            console.warn(`Item file ${file} has no itemid, skipping`);
+            return;
+          }
+          
+          // Use the numeric itemid as the key in our database
+          const itemId = itemData.itemid.toString();
+          
+          items[itemId] = {
+            id: itemId,
+            name: itemData.Name || file.replace('.json', ''),
+            description: itemData.Description || '',
+            category: itemData.Category || 'Uncategorized',
+            numericId: itemData.itemid,
+            shortname: itemData.shortname || '',
+            image: `/api/items/images/${itemData.shortname}.png`,
+            lastUpdated: new Date().toISOString()
+          };
+          
+          itemCount++;
+          
+          // Update progress every 100 items
+          if (itemCount % 100 === 0) {
+            const progress = Math.min(Math.floor((itemCount / itemFiles.length) * 30) + 60, 90);
+            updateProgress(io, progress, `Processed ${itemCount} of ${itemFiles.length} items`);
+          }
+        } catch (error) {
+          console.error(`Error processing item file ${file}:`, error);
+        }
+      });
+      
+      // Save the database to disk
+      const database = {
+        metadata: {
+          itemCount,
+          lastUpdated: new Date().toISOString(),
+          rustAppId: RUST_APP_ID
+        },
+        items
+      };
+      
+      fs.writeFileSync(DATABASE_PATH, JSON.stringify(database, null, 2));
+      
+      // Copy image files from Rust client to our images directory
+      copyItemImages(io);
+      
+      console.log(`Successfully processed ${itemCount} items`);
+      
+      resolve({
+        success: true,
+        message: `Database updated with ${itemCount} items`,
+        itemCount
+      });
+    } catch (error) {
+      console.error('Error processing item files:', error);
+      reject(error);
+    }
+  });
+}
+
+/**
+ * Copy item images from Rust client to our images directory
+ */
+function copyItemImages(io) {
+  try {
+    updateProgress(io, 90, 'Copying item images...');
+    
+    const itemImagesDir = path.join(RUST_CLIENT_PATH, 'Bundles', 'items');
+    const pngFiles = fs.readdirSync(itemImagesDir)
+      .filter(file => file.endsWith('.png'));
+    
+    console.log(`Found ${pngFiles.length} item images`);
+    
+    pngFiles.forEach(file => {
+      const sourcePath = path.join(itemImagesDir, file);
+      const destPath = path.join(IMAGES_DIR, file);
+      
+      fs.copyFileSync(sourcePath, destPath);
+    });
+    
+    console.log(`Copied ${pngFiles.length} item images to ${IMAGES_DIR}`);
+  } catch (error) {
+    console.error('Error copying item images:', error);
+    // Continue even if image copying fails
+  }
+}
+
+/**
+ * Update the item database
+ */
+async function updateItemDatabase(io, credentials = null) {
+  try {
+    // Start the update process
+    updateProgress(io, 5, 'Starting database update...');
+    
+    // Make sure directories exist
+    ensureDirectoriesExist();
+    
+    // Install SteamCMD if necessary
+    if (!isSteamCmdInstalled()) {
+      await installSteamCmd(io);
+    }
+    
+    // If no credentials provided, check if we're logged in
+    if (!credentials) {
+      const loginStatus = await checkSteamLogin();
+      
+      if (!loginStatus.loggedIn) {
+        updateProgress(io, 0, `Steam login required: ${loginStatus.message}`);
+        return {
+          success: false,
+          requireSteamLogin: true,
+          message: loginStatus.message
+        };
+      }
+      
+      // We're logged in, no need for explicit credentials
+      console.log(`Using existing Steam login for user: ${loginStatus.username}`);
+    }
+    
+    // Download Rust client if necessary
+    await downloadRustClient(io, credentials);
+    
+    // Process Rust assets
+    const result = await processRustAssets(io);
+    
+    // Update complete
+    updateProgress(io, 100, 'Database update complete!');
+    
+    return result;
+  } catch (error) {
+    console.error('Error updating database:', error);
+    updateProgress(io, 0, `Error: ${error.message}`);
+    
+    return {
+      success: false,
+      message: `Error: ${error.message}`
+    };
+  }
+}
+
 module.exports = {
   initializeRustPlus,
   getStatus,
@@ -470,5 +859,7 @@ module.exports = {
   checkSubscription,
   getMapMarkers,
   calculateUndercutPrices,
-  getCachedMapMarkers
+  getCachedMapMarkers,
+  updateItemDatabase: rustAssetManager.updateItemDatabase,
+  checkSteamLogin: rustAssetManager.checkSteamLogin
 }; 

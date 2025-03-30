@@ -2,7 +2,7 @@
 <template>
   <div class="settings-container">
     <!-- Loading state -->
-    <div v-if="isLoading" :style="getBoxStyle()">
+    <div v-if="isLoading && !steamLoginForm.showForm" :style="getBoxStyle()">
       <div class="d-flex align-center mb-4">
         <div class="skeleton-title" :style="getSkeletonStyle()"></div>
       </div>
@@ -227,17 +227,29 @@
       <div class="pa-4">
         <div class="d-flex justify-space-between align-center mb-3">
           <div class="text-h6" :style="getTitleStyle()">Item Database</div>
-          <v-btn
-            color="primary"
-            size="small"
-            @click="updateItemDatabase"
-            :loading="isUpdatingDatabase && progressInfo.progress !== 100"
-            :disabled="isUpdatingDatabase && progressInfo.progress !== 100"
-            :style="getButtonStyle()"
-          >
-            <v-icon class="mr-1">mdi-refresh</v-icon>
-            Update
-          </v-btn>
+          <div>
+            <v-btn
+              color="error"
+              size="small"
+              @click="confirmResetDatabase"
+              class="mr-2"
+              :style="getButtonStyle()"
+            >
+              <v-icon class="mr-1">mdi-delete</v-icon>
+              Reset
+            </v-btn>
+            <v-btn
+              color="primary"
+              size="small"
+              @click="updateItemDatabase"
+              :loading="isUpdatingDatabase && progressInfo.progress !== 100"
+              :disabled="isUpdatingDatabase && progressInfo.progress !== 100"
+              :style="getButtonStyle()"
+            >
+              <v-icon class="mr-1">mdi-refresh</v-icon>
+              Update
+            </v-btn>
+          </div>
         </div>
         
         <div class="mb-2 schedule-note">
@@ -247,51 +259,126 @@
           </small>
         </div>
         
-        <div v-if="databaseStatus.loading" class="text-center py-4">
-          <v-progress-circular indeterminate color="primary"></v-progress-circular>
-          <div class="mt-2">Loading database status...</div>
+        <div v-if="isLoadingDatabase && !steamLoginForm.showForm" class="d-flex align-center my-4">
+          <v-progress-circular indeterminate color="primary" class="mr-3"></v-progress-circular>
+          <div :style="getNormalTextStyle()">Loading database status...</div>
         </div>
         
-        <div v-else-if="databaseStatus.error" class="error-message pa-3" :style="getErrorStyle()">
-          {{ databaseStatus.error }}
+        <div v-else-if="databaseStats.error" class="error-message pa-3" :style="getErrorStyle()">
+          {{ databaseStats.error }}
         </div>
         
-        <div v-else class="database-info">
+        <div v-if="!isLoadingDatabase" class="database-info">
+          <div class="d-flex mb-2">
+            <v-icon class="mr-2">mdi-steam</v-icon>
+            <span :style="getNormalTextStyle()">
+              <strong>Steam Login:</strong> {{ steamLoginStatus.loggedIn ? `Signed in as ${steamLoginStatus.username}` : 'Signed Out' }}
+            </span>
+          </div>
+
           <div class="d-flex mb-2">
             <v-icon class="mr-2">mdi-database</v-icon>
             <span :style="getNormalTextStyle()">
-              <strong>Items:</strong> {{ databaseStatus.itemCount || 'No items' }}
+              <strong>Items:</strong> {{ databaseStats.itemCount || 'No items' }}
             </span>
           </div>
           
-          <div class="d-flex mb-2" v-if="databaseStatus.lastUpdated">
+          <div class="d-flex mb-2" v-if="databaseStats.lastUpdated">
             <v-icon class="mr-2">mdi-clock-outline</v-icon>
             <span :style="getNormalTextStyle()">
-              <strong>Last Updated:</strong> {{ formatDate(databaseStatus.lastUpdated) }}
+              <strong>Last Updated:</strong> {{ formatDate(databaseStats.lastUpdated) }}
             </span>
           </div>
           
           <div v-if="progressInfo.active" class="progress-section mt-3">
-            <p class="text-body-2" :style="getNormalTextStyle()">{{ progressInfo.message }}</p>
-            <v-progress-linear
-              v-model="progressInfo.percent"
-              :color="getProgressColor(progressInfo.percent)"
-              height="12"
-              striped
-              :striped="progressInfo.percent !== 100"
-            ></v-progress-linear>
-            <div class="text-caption text-right mt-1" :style="getCaptionStyle()">
-              {{ progressInfo.percent }}% complete
+            <div class="d-flex justify-space-between mb-2">
+              <div>{{ progressInfo.message }}</div>
+              <div>{{ progressInfo.progress }}%</div>
             </div>
+            <v-progress-linear 
+              :value="progressInfo.progress"
+              :color="getProgressColor(progressInfo.progress)"
+              height="8"
+            ></v-progress-linear>
+          </div>
+          
+          <!-- Show the database info or login form based on state -->
+          <div v-if="steamLoginForm.showForm" class="pa-4" :style="getServerBoxStyle()">
+            <h3 :style="getSubtitleStyle()" class="mb-3">Steam Login Required</h3>
+            <p :style="getNormalTextStyle()">{{ steamLoginStatus.message }}</p>
+            
+            <v-form @submit.prevent="handleSteamLogin" class="mt-4">
+              <v-text-field
+                v-model="steamLoginForm.username"
+                label="Steam Username"
+                variant="outlined"
+                :disabled="steamLoginForm.loading"
+                required
+              ></v-text-field>
+              
+              <v-text-field
+                v-model="steamLoginForm.password"
+                label="Steam Password"
+                type="password"
+                variant="outlined"
+                :disabled="steamLoginForm.loading"
+                required
+              ></v-text-field>
+              
+              <v-btn
+                type="submit"
+                color="primary"
+                :loading="steamLoginForm.loading"
+                :disabled="steamLoginForm.loading"
+                class="mt-3"
+              >
+                Login to Steam
+              </v-btn>
+            </v-form>
           </div>
         </div>
       </div>
     </div>
+    
+    <!-- Reset Database Confirmation Dialog -->
+    <v-dialog v-model="showResetConfirmDialog" max-width="400">
+      <v-card>
+        <v-card-title class="text-h5">Reset Database?</v-card-title>
+        <v-card-text>
+          <p class="mb-2">This will delete ALL downloaded data including:</p>
+          <ul class="mb-4">
+            <li>All item images</li>
+            <li>Downloaded Rust client files</li>
+            <li>Steam credentials & login cache</li>
+            <li>Item database</li>
+          </ul>
+          <p class="text-error">This action cannot be undone!</p>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn
+            color="grey-darken-1"
+            variant="text"
+            @click="showResetConfirmDialog = false"
+          >
+            Cancel
+          </v-btn>
+          <v-btn
+            color="error"
+            variant="text"
+            @click="resetDatabase"
+            :loading="isResetting"
+          >
+            Reset Database
+          </v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
     </div>
   </template>
   
   <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import { io } from 'socket.io-client';
 import ServerPairing from './ServerPairing.vue';
 import axios from 'axios';
@@ -306,7 +393,8 @@ const {
   getNormalTextStyle, 
   getCaptionStyle, 
   getButtonStyle,
-  getErrorStyle
+  getErrorStyle,
+  getSubtitleStyle
 } = useStyleUtils();
 
 // Custom skeleton loader styling functions
@@ -336,6 +424,7 @@ const pairingComponent = ref(null);
 const serverData = ref(null);
 const showConfirmDialog = ref(false);
 const isLoading = ref(true);
+const isLoadingDatabase = ref(false);
 const rustplusStatus = ref({
   connected: false,
   lastConnected: null,
@@ -345,7 +434,7 @@ const rustplusStatus = ref({
 const socket = io();
 
 // Item database status
-const databaseStatus = ref({
+const databaseStats = ref({
   loading: true,
   itemCount: 0,
   lastUpdated: null,
@@ -355,88 +444,74 @@ const databaseStatus = ref({
 const isUpdatingDatabase = ref(false);
 const progressInfo = ref({
   active: false,
-  percent: 0,
+  progress: 0,
   message: ''
 });
 
+// Add Steam login form state
+const steamLoginForm = ref({
+  username: '',
+  password: '',
+  loading: false,
+  showForm: false
+});
+
+// Add the following to your data section
+const steamLoginStatus = ref({
+  loggedIn: false,
+  username: '',
+  message: ''
+});
+
+const errorMessage = ref('');
+
+// Add these variables
+const showResetConfirmDialog = ref(false);
+const isResetting = ref(false);
+
 onMounted(async () => {
-  // Load server data if it exists
   try {
-    const response = await axios.get('/api/pairing/current');
-    if (response.data.success && response.data.data) {
-      serverData.value = response.data.data;
+    // Make sure the socket connection is working
+    socket.on('connect', () => {
+      console.log('Socket connected!', socket.id);
+    });
+    
+    socket.on('disconnect', () => {
+      console.log('Socket disconnected');
+    });
+    
+    // Set up the listener for item database progress
+    socket.on('itemDatabaseProgress', (data) => {
+      console.log('Received database progress update:', data);
+      progressInfo.value = {
+        active: true,
+        progress: data.progress,
+        message: data.message
+      };
       
-      // Get RustPlus status
-      await loadRustPlusStatus();
-    }
-    // Set loading to false regardless of whether we found server data
-    isLoading.value = false;
+      // If progress is 100%, we're done - wait a moment then set active to false
+      if (data.progress >= 100) {
+        setTimeout(() => {
+          progressInfo.value.active = false;
+          isUpdatingDatabase.value = false;
+          // Refresh the database stats after update is complete
+          fetchDatabaseStatus();
+        }, 2000); // Show 100% for 2 seconds before hiding
+      }
+    });
+    
+    // Important: Fetch both server data and database status on component mount
+    await Promise.all([
+      checkSteamLoginStatus().catch(err => console.error('Error checking Steam login:', err)),
+      fetchServerData().catch(err => console.error('Error fetching server data:', err)),
+      fetchDatabaseStatus().catch(err => console.error('Error fetching database status:', err))
+    ]);
+    
   } catch (error) {
-    console.error('Failed to load server data:', error);
+    console.error('Error initializing component:', error);
+  } finally {
     isLoading.value = false;
   }
-  
-  // Set up socket listeners for RustPlus status updates
-  socket.on('rustplusStatus', (status) => {
-    rustplusStatus.value = status;
-  });
-  
-  // Set up socket listeners for item database updates
-  socket.on('itemDatabaseProgress', (progress) => {
-    // Update progress info
-    progressInfo.value = {
-      active: true,
-      percent: progress.progress,
-      message: progress.message
-    };
-    
-    // Add more context to certain phases
-    if (progress.progress === 25) {
-      progressInfo.value.message += ' (this may take several minutes)';
-    }
-    
-    if (progress.progress === 70) {
-      progressInfo.value.message += ' (almost done)';
-    }
-    
-    // Update database status
-    if (progress.progress === 100) {
-      // Success - refresh database info and keep visible for a moment
-      isUpdatingDatabase.value = true;
-      
-      // Keep the success message and green progress bar visible for 3 seconds
-      setTimeout(() => {
-        fetchDatabaseStatus();
-        
-        // After showing success for 3 seconds, hide the progress
-        setTimeout(() => {
-          isUpdatingDatabase.value = false;
-          // Also reset the active state
-          progressInfo.value.active = false;
-        }, 3000);
-      }, 1000);
-    } else if (progress.progress === 0) {
-      // Error state handling
-      isUpdatingDatabase.value = true;
-    } else {
-      // Regular progress updates
-      isUpdatingDatabase.value = true;
-    }
-  });
-  
-  socket.on('itemDatabaseUpdated', () => {
-    isUpdatingDatabase.value = false;
-    progressInfo.value.active = false;
-    fetchDatabaseStatus();
-  });
-  
-  socket.on('itemDatabaseError', (error) => {
-    isUpdatingDatabase.value = false;
-    progressInfo.value.message = `Error: ${error.error}`;
-  });
-  
-  // Fetch initial database status
-  fetchDatabaseStatus();
 });
 
 onUnmounted(() => {
@@ -471,26 +546,6 @@ async function loadRustPlusStatus() {
   }
 }
 
-// Connect or disconnect from the Rust+ server
-async function toggleRustPlusConnection() {
-  try {
-    if (rustplusStatus.value.connected) {
-      // Disconnect logic (if we add this later)
-      console.log('Disconnect not implemented yet');
-    } else {
-      // Connect to Rust+ server
-      const response = await axios.post('/api/rustplus/connect');
-      if (response.data.success) {
-        console.log('RustPlus connection initiated');
-      } else {
-        console.error('Failed to connect to RustPlus:', response.data.error);
-      }
-    }
-  } catch (error) {
-    console.error('Failed to toggle RustPlus connection:', error);
-  }
-}
-
 function startPairing() {
   console.log('Starting pairing process...');
   if (pairingComponent.value) {
@@ -520,10 +575,6 @@ async function loadServerData() {
   }
 }
 
-function disconnectServer() {
-  showConfirmDialog.value = true;
-}
-
 async function confirmDisconnect() {
   try {
     const response = await axios.post('/api/pairing/disconnect');
@@ -544,58 +595,249 @@ async function confirmDisconnect() {
 
 // Fetch database status
 const fetchDatabaseStatus = async () => {
-  databaseStatus.value.loading = true;
-  databaseStatus.value.error = null;
-  
+  console.log('Fetching database status...');
   try {
+    isLoadingDatabase.value = true;
+    
+    // Get database stats from the API
     const response = await axios.get('/api/items');
     if (response.data.success) {
-      databaseStatus.value = {
-        loading: false,
-        itemCount: response.data.data.itemCount || 0,
-        lastUpdated: response.data.data.lastUpdated,
-        error: null
-      };
+      console.log('Received database stats:', response.data.data);
+      databaseStats.value = response.data.data || { itemCount: 0, lastUpdated: null };
     } else {
-      databaseStatus.value.error = 'Failed to fetch database status';
+      console.error('API returned success: false for database stats');
+      databaseStats.value.error = 'Failed to load database stats';
     }
   } catch (error) {
     console.error('Error fetching database status:', error);
-    databaseStatus.value.error = error.response?.data?.error || 'Network error';
+    databaseStats.value.error = error.message || 'Failed to load database stats';
   } finally {
-    databaseStatus.value.loading = false;
+    isLoadingDatabase.value = false;
   }
 };
 
 // Update item database
 const updateItemDatabase = async () => {
-  if (isUpdatingDatabase.value) return;
+  console.log('Updating item database...', isUpdatingDatabase.value);
+  // Reset the updating flag in case it's stuck from a previous attempt
+  isUpdatingDatabase.value = false;
   
   isUpdatingDatabase.value = true;
+  
+  // Reset progress
   progressInfo.value = {
     active: true,
-    percent: 0,
+    progress: 5,
     message: 'Starting database update...'
   };
+
+  console.log('Checking Steam login status...');
+  
+  // First check if the user is logged into Steam
+  try {
+    const steamCheckResponse = await axios.get('/api/steam/login-status');
+    console.log('Steam login status:', steamCheckResponse.data);
+    
+    if (!steamCheckResponse.data.loggedIn) {
+      progressInfo.value.message = 'Steam login required: ' + steamCheckResponse.data.message;
+      steamLoginForm.value.showForm = true;
+      isUpdatingDatabase.value = false;
+      return;
+    }
+  } catch (error) {
+    console.error('Error checking Steam login status:', error);
+    progressInfo.value = {
+      active: true,
+      progress: 0,
+      message: `Error: ${error.message}`
+    };
+    isUpdatingDatabase.value = false;
+    return;
+  }
   
   try {
-    await axios.post('/api/items/update');
-    // The actual update happens in the background, progress will be sent via socket
+    // Start the database update
+    const response = await axios.post('/api/items/update', {}, {
+      onUploadProgress: (progressEvent) => {
+        // This will only catch the initial request progress, not the server-side updates
+        const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+        progressInfo.value.progress = Math.min(10, percent); // Cap at 10% for request phase
+      }
+    });
+    
+    console.log('Database update started:', response.data);
+    
+    // We'll let the socket events handle the progress updates and completion
+    // Don't set progressInfo.active = false here
+    
+    // Reload the database stats when done
+    // await fetchDatabaseStatus();
+    
   } catch (error) {
-    console.error('Error starting database update:', error);
-    progressInfo.value.message = `Error: ${error.message}`;
+    console.error('Error updating database:', error);
+    progressInfo.value = {
+      active: true,
+      progress: 0,
+      message: `Error updating database: ${error.response?.data?.error || error.message}`
+    };
+    // Log more details for debugging
+    if (error.response) {
+      console.error('Response data:', error.response.data);
+      console.error('Response status:', error.response.status);
+    }
+    isUpdatingDatabase.value = false;
   }
 };
 
-function getProgressColor(percent) {
-  if (percent === 100) return 'success';
-  if (percent === 0 && progressInfo.value.message.includes('Error')) return 'error';
-  
-  // Different colors for different progress stages to provide better visual feedback
-  if (percent < 25) return 'info';     // Initial setup (blue)
-  if (percent < 70) return 'warning';  // Downloading (orange/amber)
-  return 'primary';                    // Processing (default blue)
+function getProgressColor(progress) {
+  if (progress < 30) return 'red';
+  if (progress < 70) return 'orange';
+  return 'green';
 }
+
+// Improve the Steam login handler to automatically start the database update after successful login
+async function handleSteamLogin() {
+  try {
+    steamLoginForm.value.loading = true;
+    
+    const response = await axios.post('/api/steam/login', {
+      username: steamLoginForm.value.username,
+      password: steamLoginForm.value.password
+    });
+    
+    if (response.data.success) {
+      // Login successful - clear the form
+      steamLoginForm.value.username = '';
+      steamLoginForm.value.password = '';
+      steamLoginForm.value.showForm = false;
+      
+      // Show success message
+      progressInfo.value = {
+        active: true,
+        progress: 20,
+        message: 'Steam login successful! Starting database update...'
+      };
+      
+      // After a short delay, start the database update
+      setTimeout(() => {
+        updateItemDatabase();
+      }, 1000);
+      
+      // Refresh the login status
+      refreshLoginStatus();
+    } else {
+      // Login failed
+      progressInfo.value = {
+        active: true,
+        progress: 0,
+        message: `Steam login failed: ${response.data.error || 'Unknown error'}`
+      };
+    }
+  } catch (error) {
+    console.error('Error during Steam login:', error);
+    progressInfo.value = {
+      active: true,
+      progress: 0,
+      message: `Error: ${error.response?.data?.error || error.message || 'Unknown error during login'}`
+    };
+  } finally {
+    steamLoginForm.value.loading = false;
+  }
+}
+
+// Add this method to check Steam login status
+async function checkSteamLoginStatus() {
+  try {
+    const response = await axios.get('/api/steam/login-status');
+    steamLoginStatus.value = response.data;
+    console.log('Steam login status:', steamLoginStatus.value);
+  } catch (error) {
+    console.error('Error checking Steam login status:', error);
+  }
+}
+
+// You can also add a method to refresh the login status after successful login
+function refreshLoginStatus() {
+  checkSteamLoginStatus();
+}
+
+// Add this function to handle fetching server data
+async function fetchServerData() {
+  try {
+    const response = await axios.get('/api/pairing/current');
+    if (response.data.success && response.data.data) {
+      serverData.value = response.data.data;
+      
+      // Get RustPlus status
+      await loadRustPlusStatus();
+    }
+    return serverData.value;
+  } catch (error) {
+    console.error('Failed to load server data:', error);
+    return null;
+  }
+}
+
+// Add functions for database reset
+function confirmResetDatabase() {
+  showResetConfirmDialog.value = true;
+}
+
+async function resetDatabase() {
+  try {
+    isResetting.value = true;
+    
+    // Call the API to reset the database
+    const response = await axios.post('/api/items/reset');
+    
+    if (response.data.success) {
+      progressInfo.value = {
+        active: true,
+        progress: 100,
+        message: 'Database successfully reset!'
+      };
+      
+      // Reset steam login status
+      steamLoginStatus.value = {
+        loggedIn: false,
+        username: '',
+        message: 'Steam login required'
+      };
+      
+      // Clear database stats
+      databaseStats.value = {
+        itemCount: 0,
+        lastUpdated: null,
+        error: null
+      };
+      
+      // Show the login form
+      steamLoginForm.value.showForm = true;
+      
+      // Hide the progress after a delay
+      setTimeout(() => {
+        progressInfo.value.active = false;
+      }, 3000);
+    } else {
+      progressInfo.value = {
+        active: true,
+        progress: 0,
+        message: `Reset failed: ${response.data.error || 'Unknown error'}`
+      };
+    }
+  } catch (error) {
+    console.error('Error resetting database:', error);
+    progressInfo.value = {
+      active: true,
+      progress: 0,
+      message: `Error: ${error.response?.data?.error || error.message}`
+    };
+  } finally {
+    isResetting.value = false;
+    showResetConfirmDialog.value = false;
+  }
+}
+
   </script>
 
 <style scoped>

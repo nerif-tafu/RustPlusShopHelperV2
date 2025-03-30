@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import Undercutter from '@/components/Undercutter.vue';
+import Undercutter from '../components/Undercutter.vue';
 import ShopStock from '@/components/ShopStock.vue';
 import ShopSearch from '@/components/ShopSearch.vue';
 import Settings from '@/components/Settings.vue';

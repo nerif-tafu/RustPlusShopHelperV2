@@ -133,3 +133,4 @@ server/RPData.json
 .ideas/*
 .ideas/
 server/data/*
+server/steamcmd/

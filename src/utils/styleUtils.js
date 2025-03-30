@@ -64,6 +64,12 @@ export function useStyleUtils() {
         color: theme.global.current.value.colors.error,
         fontFamily: theme.global.current.value.fontFamily
       };
-    }
+    },
+
+    // Subtitle style
+    getSubtitleStyle: () => ({
+      fontWeight: '500',
+      fontSize: '1.1rem'
+    })
   };
 } 

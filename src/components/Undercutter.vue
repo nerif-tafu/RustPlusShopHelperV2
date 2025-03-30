@@ -114,8 +114,6 @@
                 <p>Difference: {{ item.priceDifference }} ({{ Math.round(item.percentageDifference) }}%)</p>
                 <p>Your Shop: {{ item.myShop.name }}</p>
                 <p>Competitor Shop: {{ item.competitorShop.name }}</p>
-                <v-btn color="primary" class="mr-2" @click="matchPrice(item)">Match Price</v-btn>
-                <v-btn color="success" @click="undercutPrice(item)">Undercut</v-btn>
               </v-col>
             </v-row>
           </v-card-text>
@@ -158,7 +156,8 @@ const socket = io(import.meta.env.PROD ? window.location.origin : 'http://localh
 socket.on('connect', () => {
   console.log('Socket connected');
   // Request current status
-  socket.emit('rustplus:getStatus');
+  socket.emit('getStatus');
+  console.log('Requested Rust+ status');
 });
 
 socket.on('disconnect', () => {
@@ -167,8 +166,9 @@ socket.on('disconnect', () => {
 });
 
 // Listen for connection status updates
-socket.on('rustplus:status', (status) => {
+socket.on('rustplusStatus', (status) => {
   rustplusStatus.value = status;
+  console.log('Received Rust+ status update:', status);
   
   // If just connected, refresh data
   if (status.connected) {
@@ -271,20 +271,6 @@ function findUndercutItemsFromEnrichedData() {
   
   // Sort by percentage difference (highest first)
   undercutItems.value.sort((a, b) => b.percentageDifference - a.percentageDifference);
-}
-
-// Match competitor's price
-function matchPrice(item) {
-  // This would be implemented to actually update the price in-game
-  console.log(`Matching price for ${item.itemName}: ${item.competitorPrice}`);
-  // In a real implementation, you'd call an API to update the price
-}
-
-// Undercut competitor's price
-function undercutPrice(item) {
-  // This would be implemented to actually update the price in-game
-  console.log(`Undercutting price for ${item.itemName}: ${item.suggestedPrice}`);
-  // In a real implementation, you'd call an API to update the price
 }
 
 // Load data on component mount

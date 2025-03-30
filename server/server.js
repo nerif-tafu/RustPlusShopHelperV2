@@ -1,12 +1,14 @@
 const express = require('express');
 const { Server } = require("socket.io");
 const cors = require('cors');
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 const pairingService = require('./services/pairingService');
 const rustplusService = require('./services/rustplusService');
-const itemDatabase = require('./services/itemDatabase');
+const rustAssetManager = require('./services/RustAssetManager');
 const socketInstance = require('./socketInstance');
 const cron = require('node-cron');
-const { main: extractRustAssets } = require('./scripts/extractRustAssets');
 
 // Create Express app
 const app = express();
@@ -15,7 +17,7 @@ const app = express();
 app.use(cors({
   origin: process.env.NODE_ENV === 'production' 
     ? false
-    : "http://localhost:3000"
+    : ["http://localhost:3000", "http://localhost:5173"]
 }));
 
 app.use(express.json());
@@ -40,24 +42,40 @@ const io = socketInstance.initialize(new Server(server, {
   cors: {
         origin: process.env.NODE_ENV === 'production' 
             ? false 
-            : "http://localhost:3000",
+            : ["http://localhost:3000", "http://localhost:5173"],
         methods: ["GET", "POST"]
     }
 }));
 
+// Make the io object available to other modules
+global.io = io;
+
+// Set up socket handlers
+io.on('connection', (socket) => {
+  console.log('Client connected to socket.io');
+  
+  // Handle status request
+  socket.on('getStatus', () => {
+    const status = rustplusService.getStatus();
+    console.log('Client requested Rust+ status, sending:', status.connected ? 'connected' : 'disconnected');
+    socket.emit('rustplusStatus', status);
+  });
+  
+  // More socket handlers...
+});
+
 // Serve item images
-itemDatabase.serveItemImages(app);
+rustAssetManager.serveItemImages(app);
 
 // Item database endpoints
 app.get('/api/items', async (req, res) => {
   try {
-    const itemDb = require('./services/itemDatabase');
-    const stats = await itemDb.getDatabaseStats();
+    const stats = await rustAssetManager.getDatabaseStats();
     
     // If the client requests all items, return the full database
     if (req.query.all === 'true') {
       // Get all items from the database
-      const items = itemDb.getAllItems();
+      const items = rustAssetManager.getAllItems();
       res.json({ 
         success: true, 
         data: {
@@ -77,7 +95,7 @@ app.get('/api/items', async (req, res) => {
 
 app.get('/api/items/:id', (req, res) => {
   try {
-    const item = itemDatabase.getItemById(req.params.id);
+    const item = rustAssetManager.getItemById(req.params.id);
     if (item) {
       res.json({ success: true, data: item });
     } else {
@@ -90,9 +108,19 @@ app.get('/api/items/:id', (req, res) => {
 
 app.post('/api/items/update', async (req, res) => {
   try {
-    const itemDb = require('./services/itemDatabase');
+    const steamLoginStatus = await rustAssetManager.checkSteamLogin();
+    
+    // If not logged in, let the client know
+    if (!steamLoginStatus.loggedIn) {
+      return res.status(400).json({
+        success: false,
+        requireSteamLogin: true,
+        message: steamLoginStatus.message
+      });
+    }
+    
     // Start update in background
-    itemDb.updateDatabase(io); // This now uses extractRustAssets internally
+    await rustAssetManager.updateItemDatabase(io);
     res.json({ success: true, message: 'Database update started' });
   } catch (error) {
     console.error('Error starting database update:', error);
@@ -602,6 +630,77 @@ app.get('/api/rustplus/vendingMachine/:id', async (req, res) => {
   }
 });
 
+// Steam login endpoints
+app.get('/api/steam/login-status', async (req, res) => {
+  try {
+    const status = await rustAssetManager.checkSteamLogin();
+    res.json({
+      success: true,
+      ...status
+    });
+  } catch (error) {
+    console.error('Error checking Steam login:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+app.post('/api/steam/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+    
+    // If no credentials provided, check login status
+    if (!username || !password) {
+      const loginStatus = await rustAssetManager.checkSteamLogin();
+      return res.json({
+        success: true,
+        loggedIn: loginStatus.loggedIn,
+        username: loginStatus.username,
+        message: 'Ready for credentials'
+      });
+    }
+    
+    try {
+      // Attempt to login with provided credentials
+      const loginResult = await rustAssetManager.steamLogin(username, password);
+      
+      return res.json({
+        success: true,
+        ...loginResult
+      });
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        error: 'Steam login failed',
+        details: error.message
+      });
+    }
+  } catch (error) {
+    console.error('Error during Steam login:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Add this endpoint to handle database reset
+app.post('/api/items/reset', async (req, res) => {
+  try {
+    // Call the reset function from RustAssetManager
+    await rustAssetManager.resetItemDatabase();
+    res.json({ success: true, message: 'Database successfully reset' });
+  } catch (error) {
+    console.error('Error resetting database:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Start server
 server.listen(3001, () => {
     console.log('Server running on port 3001');
@@ -630,16 +729,11 @@ server.listen(3001, () => {
       // If this is the first Thursday of the month (day <= 7)
       if (day <= 7) {
         console.log('Running scheduled item database update (first Thursday of the month)');
-        itemDatabase.updateDatabase(io)
+        rustAssetManager.updateItemDatabase(io)
           .then(result => console.log('Scheduled database update result:', result))
           .catch(err => console.error('Scheduled database update failed:', err));
       }
     }, {
       timezone: "Etc/GMT" // Run at specified time in GMT
     });
-});
-
-app.post('/api/update-database', async (req, res) => {
-  const result = await extractRustAssets(io);
-  res.json(result);
 });
