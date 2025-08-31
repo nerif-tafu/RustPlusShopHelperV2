@@ -463,78 +463,45 @@ app.post('/api/undercutter/calculate', async (req, res) => {
   }
 });
 
-// Add this new endpoint for bulk vending machine data
+// Add this new endpoint for vending machine data with pre-processed undercut information
 app.get('/api/rustplus/vendingMachines', async (req, res) => {
   try {
-    // Get access to rustplus service
-    const rustplus = rustplusService;
-    const shopPrefix = req.query.prefix || '';
+    const prefix = req.query.prefix || '';
+    const vendingMachines = await rustplusService.getCachedMapMarkers();
     
-    // Check if we're connected to Rust+
-    const status = rustplusService.getStatus();
-    if (!status.connected) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Not connected to Rust+' 
-      });
-    }
+    // Extract the markers array from the returned object
+    const markers = vendingMachines.markers || [];
+    const allShops = markers.filter(marker => marker.type === 'VendingMachine' || marker.type === 3);
     
-    // Get vending machine data
-    const mapMarkers = rustplusService.getCachedMapMarkers();
+    // Transform all shops to the standardized format
+    const transformedShops = rustplusService.transformVendingMachines(allShops);
     
-    if (!mapMarkers || !mapMarkers.markers) {
-      return res.status(404).json({ 
-        success: false, 
-        error: 'Could not retrieve map markers' 
-      });
-    }
+    // Categorize the transformed shops
+    const allyShops = transformedShops.filter(shop => 
+      shop.shopName && shop.shopName.toLowerCase().includes(prefix.toLowerCase())
+    );
     
-    // Filter for only vending machines (marker type 3)
-    const vendingMachines = mapMarkers.markers
-      .filter(marker => marker.type === 3 || marker.type === "VendingMachine")
-      .map(vm => {
-        // Cleanup and enhance the vending machine data with item info from our database
-        const sellOrders = (vm.sellOrders || []).map(order => {
-          // Use rustAssetManager to get item details
-          const itemDetails = rustAssetManager.getItemById(order.itemId);
-          
-          return {
-            ...order,
-            itemDetails: itemDetails || { name: `Unknown Item (${order.itemId})` }
-          };
-        });
-        
-        // Return the processed vending machine
-        return {
-          id: vm.id,
-          name: vm.name,
-          location: {
-            x: vm.x,
-            y: vm.y
-          },
-          sellOrders: sellOrders,
-          isPlayerOwned: vm.name && vm.name.toLowerCase().includes(shopPrefix.toLowerCase())
-        };
-      });
+    const enemyShops = transformedShops.filter(shop => 
+      shop.shopName && !shop.shopName.toLowerCase().includes(prefix.toLowerCase())
+    );
     
-    // Split into your shops and competitor shops
-    const yourShops = vendingMachines.filter(vm => vm.isPlayerOwned);
-    const competitorShops = vendingMachines.filter(vm => !vm.isPlayerOwned);
+    // Pre-calculate undercut items
+    const undercutListings = rustplusService.calculateUndercutPrices(allyShops, enemyShops);
     
-    // Return all vending machines at once
-    return res.json({
+    // Return the structured data
+    res.json({
       success: true,
       data: {
-        yourShops,
-        competitorShops,
-        allShops: vendingMachines
+        allyShops,
+        enemyShops,
+        undercutListings
       }
     });
   } catch (error) {
-    console.error('Error fetching vending machines:', error);
-    return res.status(500).json({ 
-      success: false, 
-      error: 'Internal server error' 
+    console.error('Error getting vending machines:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
     });
   }
 });

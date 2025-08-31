@@ -408,33 +408,109 @@ async function getMapMarkers() {
 }
 
 /**
- * Calculate undercutting prices for the given item IDs
- * @param {string[]} itemIds - Array of item IDs to calculate prices for
- * @returns {Array} - Array of suggestions
+ * Transform raw vending machine data into standardized format
+ * @param {Array} machines - Raw vending machine data from Rust+
+ * @returns {Array} - Standardized shop data
  */
-async function calculateUndercutPrices(itemIds) {
-  // This is where you would implement your actual logic to check current prices
-  // and calculate the undercutting prices
-  
-  // For now, we're just returning example data
-  const suggestions = [];
-  
-  for (const itemId of itemIds) {
-    // In a real implementation, you'd query vending machines through Rust+
-    // or use cached data to determine current prices
-    
-    // Mock implementation
-    const currentPrice = Math.floor(Math.random() * 100) + 10; // Random price between 10-110
-    const suggestedPrice = Math.max(currentPrice - Math.ceil(currentPrice * 0.05), 1); // 5% less, minimum 1
-    
-    suggestions.push({
-      itemId,
-      currentPrice,
-      suggestedPrice
+function transformVendingMachines(machines, prefix) {
+  return machines.map(machine => {
+    // Process sell orders to standard format
+    const sellOrders = (machine.sellOrders || []).map(order => {
+      // Get item details from the database
+      const itemSellingDetails = rustAssetManager.getItemById(order.itemId);
+      const itemBuyingDetails = rustAssetManager.getItemById(order.currencyId);
+      
+      return {
+        itemSellingStockQty: order.quantity || 0,
+        itemSellingId: order.itemId,
+        itemSellingDescription: itemSellingDetails?.description || "",
+        itemSellingName: itemSellingDetails?.name || `Unknown Item (${order.itemId})`,
+        itemSellingImage: itemSellingDetails?.image || '/img/items/unknown.png',
+        itemSellingPrice: order.quantity || 0,
+        itemBuyingId: order.currencyId,
+        itemBuyingDescription: itemBuyingDetails?.description || "",
+        itemBuyingName: itemBuyingDetails?.name || `Unknown Item (${order.currencyId})`,
+        itemBuyingImage: itemBuyingDetails?.image || '/img/items/unknown.png',
+        itemBuyingPrice: order.costPerItem || 0
+      };
     });
-  }
+    
+    return {
+      shopName: machine.name || "Unknown Shop",
+      shopId: machine.id,
+      sellOrders
+    };
+  });
+}
+
+/**
+ * Calculate undercut prices for vending machines
+ * @param {Array} allyShops - Shops that match the user's prefix
+ * @param {Array} enemyShops - Shops that don't match the user's prefix
+ * @returns {Array} - Array of undercut listings
+ */
+function calculateUndercutPrices(allyShops, enemyShops) {
+  const undercutListings = [];
   
-  return suggestions;
+  // Process each ally shop
+  allyShops.forEach(allyShop => {
+    if (!allyShop.sellOrders || allyShop.sellOrders.length === 0) return;
+    
+    // Process each sell order in the ally shop
+    allyShop.sellOrders.forEach(allySellOrder => {
+      const itemSellingId = allySellOrder.itemSellingId;
+      const itemBuyingId = allySellOrder.itemBuyingId;
+      const allyPrice = allySellOrder.itemBuyingPrice;
+      
+      // Find matching enemy sell orders (same item, same currency)
+      const matchingEnemySellOrders = [];
+      
+      enemyShops.forEach(enemyShop => {
+        if (!enemyShop.sellOrders) return;
+        
+        enemyShop.sellOrders.forEach(enemySellOrder => {
+          if (enemySellOrder.itemSellingId === itemSellingId && 
+              enemySellOrder.itemBuyingId === itemBuyingId &&
+              enemySellOrder.itemBuyingPrice < allyPrice) {
+            
+            // Add this enemy sell order to the matching list with shop info
+            matchingEnemySellOrders.push({
+              ...enemySellOrder,
+              shopName: enemyShop.shopName,
+              shopId: enemyShop.shopId
+            });
+          }
+        });
+      });
+      
+      // If we found any matching enemy sell orders that undercut the ally price
+      if (matchingEnemySellOrders.length > 0) {
+        // Sort by price (lowest first)
+        matchingEnemySellOrders.sort((a, b) => a.itemBuyingPrice - b.itemBuyingPrice);
+        
+        // Create the undercut listing
+        undercutListings.push({
+          allySellOrder: {
+            ...allySellOrder,
+            shopName: allyShop.shopName,
+            shopId: allyShop.shopId
+          },
+          enemySellOrders: matchingEnemySellOrders
+        });
+      }
+    });
+  });
+  
+  // Sort by price difference percentage (highest first)
+  return undercutListings.sort((a, b) => {
+    const aPriceDiff = a.allySellOrder.itemBuyingPrice - a.enemySellOrders[0].itemBuyingPrice;
+    const aPercentDiff = (aPriceDiff / a.allySellOrder.itemBuyingPrice) * 100;
+    
+    const bPriceDiff = b.allySellOrder.itemBuyingPrice - b.enemySellOrders[0].itemBuyingPrice;
+    const bPercentDiff = (bPriceDiff / b.allySellOrder.itemBuyingPrice) * 100;
+    
+    return bPercentDiff - aPercentDiff;
+  });
 }
 
 /**
@@ -723,7 +799,6 @@ async function processRustAssets(io) {
             description: itemData.Description || '',
             category: itemData.Category || 'Uncategorized',
             numericId: itemData.itemid,
-            shortname: itemData.shortname || '',
             image: `/api/items/images/${itemData.shortname}.png`,
             lastUpdated: new Date().toISOString()
           };
@@ -860,6 +935,7 @@ module.exports = {
   getMapMarkers,
   calculateUndercutPrices,
   getCachedMapMarkers,
+  transformVendingMachines,
   updateItemDatabase: rustAssetManager.updateItemDatabase,
   checkSteamLogin: rustAssetManager.checkSteamLogin
 }; 

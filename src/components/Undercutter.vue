@@ -95,47 +95,47 @@
     <v-row v-else>
       <v-col>
         <h3 class="mb-4">Items Being Undercut</h3>
-        <v-card v-for="item in undercutItems" :key="`${item.itemId}-${item.myShop.id}`" class="mb-5" theme="dark">
-          <v-card-title class="text-primary">{{ item.myShop.name }}</v-card-title>
+        <v-card v-for="listing in undercutItems" :key="`${listing.allySellOrder.itemSellingId}-${listing.allySellOrder.shopId}`" class="mb-5" theme="dark">
+          <v-card-title class="text-primary">{{ listing.allySellOrder.shopName }}</v-card-title>
 
           <div class="pa-2">
-            <v-table density="compact">
+            <v-table class="w-100" hover>
               <thead>
                 <tr>
-                  <th class="text-left">Type</th>
-                  <th class="text-left">Trade</th>
+                  <th class="text-left">Shop</th>
+                  <th class="text-left">Trade Details</th>
                   <th class="text-right">Ratio</th>
                 </tr>
               </thead>
               <tbody>
                 <!-- Your price row -->
                 <tr>
-                  <td>Your price</td>
+                  <td>Your shop</td>
                   <td>
                     <div class="d-flex align-center">
-                      <v-img :src="item.itemImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
-                      ×{{ getQuantityFromOrder(item.myOrder) }}
+                      <v-img :src="listing.allySellOrder.itemSellingImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
+                      ×{{ listing.allySellOrder.itemSellingStockQty }}
                       <v-icon class="mx-2">mdi-arrow-right</v-icon>
-                      <v-img :src="item.currencyImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
-                      ×{{ item.yourPrice }}
+                      <v-img :src="listing.allySellOrder.itemBuyingImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
+                      ×{{ listing.allySellOrder.itemBuyingPrice }}
                     </div>
                   </td>
-                  <td class="text-right font-weight-bold">{{ calculateRatio(item.yourPrice, getQuantityFromOrder(item.myOrder)) }}:1</td>
+                  <td class="text-right font-weight-bold">{{ calculateRatio(listing.allySellOrder.itemBuyingPrice, listing.allySellOrder.itemSellingStockQty) }}:1</td>
                 </tr>
                 
                 <!-- Competitor rows -->
-                <tr v-for="competitor in item.competitors" :key="competitor.shopId">
-                  <td class="text-purple-lighten-3">{{ competitor.shopName }}</td>
+                <tr v-for="enemy in listing.enemySellOrders" :key="enemy.shopId">
+                  <td class="text-purple-lighten-3">{{ enemy.shopName }}</td>
                   <td>
                     <div class="d-flex align-center">
-                      <v-img :src="item.itemImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
-                      ×{{ competitor.quantity || 1 }}
+                      <v-img :src="enemy.itemSellingImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
+                      ×{{ enemy.itemSellingStockQty || 1 }}
                       <v-icon class="mx-2">mdi-arrow-right</v-icon>
-                      <v-img :src="item.currencyImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
-                      ×{{ competitor.price }}
+                      <v-img :src="enemy.itemBuyingImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
+                      ×{{ enemy.itemBuyingPrice }}
                     </div>
                   </td>
-                  <td class="text-right font-weight-bold">{{ calculateRatio(competitor.price, competitor.quantity || 1) }}:1</td>
+                  <td class="text-right font-weight-bold">{{ calculateRatio(enemy.itemBuyingPrice, enemy.itemSellingStockQty || 1) }}:1</td>
                 </tr>
               </tbody>
             </v-table>
@@ -143,7 +143,7 @@
 
           <!-- Suggestion -->
           <v-card-text class="text-center text-cyan-accent-2">
-            Change your cost to {{ getLowestCompetitorPrice(item) - 1 }} {{ item.currencyName }} or less.
+            Change your cost to {{ getLowestEnemyPrice(listing) - 1 }} {{ listing.allySellOrder.itemBuyingName }} or less.
           </v-card-text>
         </v-card>
       </v-col>
@@ -154,30 +154,14 @@
 <script setup>
 import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
 import { io } from 'socket.io-client';
-import axios from 'axios';
 
 // State variables
 const shopPrefix = ref(localStorage.getItem('shopPrefix') || '');
 const isLoading = ref(true);
-const allVendingMachines = ref([]);
 const undercutItems = ref([]);
 const rustplusStatus = ref({ connected: false });
-const rustItemsCache = ref({});
-
-// Create computed properties for filtering shops
-const myShops = computed(() => {
-  return allVendingMachines.value.filter(machine => 
-    machine.name && 
-    machine.name.toLowerCase().includes(shopPrefix.value.toLowerCase())
-  );
-});
-
-const competitorShops = computed(() => {
-  return allVendingMachines.value.filter(machine => 
-    machine.name && 
-    !machine.name.toLowerCase().includes(shopPrefix.value.toLowerCase())
-  );
-});
+const myShops = ref([]);
+const competitorShops = ref([]);
 
 // Setup socket connection
 const socket = io(import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
@@ -187,7 +171,6 @@ socket.on('connect', () => {
   console.log('Socket connected');
   // Request current status
   socket.emit('getStatus');
-  console.log('Requested Rust+ status');
 });
 
 socket.on('disconnect', () => {
@@ -198,7 +181,6 @@ socket.on('disconnect', () => {
 // Listen for connection status updates
 socket.on('rustplusStatus', (status) => {
   rustplusStatus.value = status;
-  console.log('Received Rust+ status update:', status);
   
   // If just connected, refresh data
   if (status.connected) {
@@ -218,15 +200,19 @@ async function loadVendingMachines() {
     isLoading.value = true;
     const response = await fetch(`/api/rustplus/vendingMachines?prefix=${encodeURIComponent(shopPrefix.value)}`);
     const result = await response.json();
-    console.log('Vending machines API response:', result);
+
+    console.log(result.data);
     
     if (result.success) {
-      // Update state with the data from the server
-      allVendingMachines.value = result.data.allShops;
-      console.log(`Loaded ${allVendingMachines.value.length} total shops`);
+      // The server now provides pre-structured data
+      const { allyShops: allyShopsData, enemyShops: enemyShopsData, undercutListings } = result.data;
       
-      // Find items being undercut - this can now be simplified
-      findUndercutItemsFromEnrichedData();
+      // Store shops for reference
+      myShops.value = allyShopsData;
+      competitorShops.value = enemyShopsData;
+      
+      // Use undercutListings directly since they're in the right format
+      undercutItems.value = undercutListings;
     } else {
       console.error('Failed to load vending machines:', result.error);
     }
@@ -236,159 +222,8 @@ async function loadVendingMachines() {
     isLoading.value = false;
   }
 }
-
-// Updated function to find undercut items from pre-enriched data
-function findUndercutItemsFromEnrichedData() {
-  try {
-    console.log('Finding undercut items from enriched data...');
-    
-    // Reset any previous results
-    undercutItems.value = [];
-    
-    // First, extract all the items you are selling
-    const mySellingItems = [];
-    
-    myShops.value.forEach(shop => {
-      if (!shop.sellOrders) return;
-      
-      shop.sellOrders.forEach(myOrder => {
-        // Debug
-        console.log('Processing my order:', myOrder);
-        
-        // Use the new data structure
-        const itemId = myOrder.itemId;
-        const currencyId = myOrder.currencyId;
-        const pricePerItem = myOrder.costPerItem;
-        
-        mySellingItems.push({
-          itemId: itemId,
-          itemName: myOrder.itemDetails?.name || `Unknown Item (${itemId})`,
-          itemImage: myOrder.itemDetails?.image || '/img/items/unknown.png',
-          currencyId: currencyId,
-          currencyDetails: rustItemsCache.value[currencyId] || null,
-          currencyName: getCurrencyName(currencyId),
-          currencyImage: rustItemsCache.value[currencyId]?.image || '/img/items/unknown.png',
-          myPrice: pricePerItem,
-          myShopName: shop.name,
-          myShopId: shop.id,
-          quantity: myOrder.quantity,
-          myOrder: myOrder
-        });
-      });
-    });
-    
-    console.log('My selling items:', mySellingItems);
-    
-    // Now check each of your items against competitor shops
-    mySellingItems.forEach(myItem => {
-      // Find all competing offers for this item
-      const competingOffers = [];
-      
-      competitorShops.value.forEach(shop => {
-        if (!shop.sellOrders) return;
-        
-        shop.sellOrders.forEach(theirOrder => {
-          // Skip if this isn't the same item
-          if (theirOrder.itemId !== myItem.itemId) return;
-          // Skip if they're not selling for the same currency
-          if (theirOrder.currencyId !== myItem.currencyId) return;
-          
-          competingOffers.push({
-            shopName: shop.name,
-            shopId: shop.id,
-            price: theirOrder.costPerItem,
-            quantity: theirOrder.quantity,
-            order: theirOrder
-          });
-        });
-      });
-      
-      // Now check if any competing offers have lower prices
-      if (competingOffers.length > 0) {
-        console.log(`Found ${competingOffers.length} competing offers for ${myItem.itemName}`);
-        
-        // Sort competing offers by price (lowest first)
-        const sortedOffers = [...competingOffers].sort((a, b) => a.price - b.price);
-        
-        // Filter only the offers that are lower than your price
-        const undercuttingOffers = sortedOffers.filter(offer => offer.price < myItem.myPrice);
-        
-        // If any offers are undercutting you
-        if (undercuttingOffers.length > 0) {
-          const lowestOffer = undercuttingOffers[0]; // For calculating difference
-          const priceDiff = myItem.myPrice - lowestOffer.price;
-          const percentDiff = (priceDiff / myItem.myPrice) * 100;
-          
-          undercutItems.value.push({
-            itemId: myItem.itemId,
-            itemName: myItem.itemName,
-            itemImage: myItem.itemImage,
-            yourPrice: myItem.myPrice,
-            // Instead of a single competitor, add all undercutting competitors
-            competitors: undercuttingOffers.map(offer => ({
-              shopId: offer.shopId,
-              shopName: offer.shopName,
-              price: offer.price,
-              quantity: offer.quantity
-            })),
-            priceDifference: priceDiff,
-            undercutPercent: percentDiff,
-            percentageDifference: percentDiff,  // For compatibility with template
-            myShop: {
-              id: myItem.myShopId,
-              name: myItem.myShopName
-            },
-            myOrder: myItem.myOrder,
-          });
-          
-          console.log(`Item ${myItem.itemName} is being undercut! Your price: ${myItem.myPrice}, Their price: ${lowestOffer.price}`);
-        }
-      }
-    });
-    
-    // Sort the results so that the most important undercutting is shown first
-    undercutItems.value.sort((a, b) => {
-      // First sort by undercut percentage (biggest undercutting first)
-      return b.undercutPercent - a.undercutPercent;
-    });
-    
-    console.log(`Found ${undercutItems.value.length} items being undercut`);
-  } catch (error) {
-    console.error('Error finding undercut items:', error);
-  }
-}
-
-// Helper function to get currency name from ID
-function getCurrencyName(currencyId) {
-  const itemDetails = rustItemsCache.value[currencyId];
-  if (itemDetails) return itemDetails.name;
-  
-  return `Unknown Currency (${currencyId})`;
-}
-
-// Add a function to load all items from the database
-async function loadItemDatabase() {
-  try {
-    const response = await axios.get('/api/items?all=true');
-    if (response.data.success && response.data.data.items) {
-      // Convert from object to lookup
-      const items = response.data.data.items;
-      for (const id in items) {
-        rustItemsCache.value[id] = items[id];
-      }
-      console.log(`Loaded ${Object.keys(rustItemsCache.value).length} items from database`);
-    }
-  } catch (error) {
-    console.error('Failed to load item database:', error);
-  }
-}
-
 // Load data on component mount
 onMounted(async () => {
-  // Add this call
-  await loadItemDatabase();
-  // Then load vending machines
-  loadVendingMachines();
   
   // Set up refreshing
   const refreshInterval = setInterval(() => {
@@ -423,10 +258,8 @@ function getQuantityFromOrder(order) {
 }
 
 // Helper function to get the lowest competitor price
-function getLowestCompetitorPrice(item) {
-  if (!item.competitors || item.competitors.length === 0) return 0;
-  return Math.min(...item.competitors.map(c => c.price));
+function getLowestEnemyPrice(listing) {
+  if (!listing.enemySellOrders || listing.enemySellOrders.length === 0) return 0;
+  return Math.min(...listing.enemySellOrders.map(e => e.itemBuyingPrice));
 }
 </script>
-
-<!-- No custom CSS needed, using Vuetify's built-in classes -->
