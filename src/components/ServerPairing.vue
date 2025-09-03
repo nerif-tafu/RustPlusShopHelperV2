@@ -13,19 +13,19 @@
           >
             <!-- Login Step -->
             <template v-slot:item.1>
-              <h3 class="text-h6 mb-4">Login with Steam</h3>
+              <h3 class="text-h6 mb-4">Login with Rust+</h3>
               <ol class="text-body-1">
                 <li>
                   <v-btn
                     color="primary"
                     class="mb-2 navbar-btn"
-                    @click="openSteamLogin"
+                    @click="openRustPlusLogin"
                   >
-                    <v-icon left class="pr-2">mdi-steam</v-icon>
+                    <v-icon left class="pr-2">mdi-login</v-icon>
                     Open Rust+ Login
                   </v-btn>
                 </li>
-                <li>1. Press the button above to login with your Steam account</li>
+                <li>1. Press the button above to login with your Rust+ account</li>
                 <li>2. Once you are at the "Welcome" screen, click <strong>Next</strong></li>
               </ol>
             </template>
@@ -91,9 +91,9 @@
                   </div>
                   
                   <div class="d-flex align-center mb-2">
-                    <v-icon class="mr-2">mdi-steam</v-icon>
+                    <v-icon class="mr-2">mdi-account</v-icon>
                     <div>
-                      <div class="text-caption">Steam ID</div>
+                      <div class="text-caption">Player ID</div>
                       <div>{{ serverInfo.playerId }}</div>
                     </div>
                   </div>
@@ -272,8 +272,8 @@ async function processHTML() {
   }
 }
 
-// Open Steam login popup
-function openSteamLogin() {
+// Open Rust+ login popup
+function openRustPlusLogin() {
   const popupFeatures = [
     'width=800', 'height=600', 'menubar=no', 'toolbar=no',
     'location=no', 'status=no', 'scrollbars=yes', 'resizable=yes'

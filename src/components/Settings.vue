@@ -2,7 +2,7 @@
 <template>
   <div class="settings-container">
     <!-- Loading state -->
-    <div v-if="isLoading && !steamLoginForm.showForm" :style="getBoxStyle()">
+    <div v-if="isLoading" :style="getBoxStyle()">
       <div class="d-flex align-center mb-4">
         <div class="skeleton-title" :style="getSkeletonStyle()"></div>
       </div>
@@ -71,8 +71,8 @@
               <div class="detail-value" :style="getNormalTextStyle()">{{ serverData.serverIP }}:{{ serverData.appPort }}</div>
               
               <div class="detail-row mt-3">
-                <v-icon size="small" class="mr-2">mdi-steam</v-icon>
-                <div class="text-caption" :style="getCaptionStyle()">Steam ID</div>
+                <v-icon size="small" class="mr-2">mdi-account</v-icon>
+                <div class="text-caption" :style="getCaptionStyle()">Player ID</div>
               </div>
               <div class="detail-value" :style="getNormalTextStyle()">{{ serverData.steamID }}</div>
             </div>
@@ -229,16 +229,6 @@
           <div class="text-h6" :style="getTitleStyle()">Item Database</div>
           <div>
             <v-btn
-              color="error"
-              size="small"
-              @click="confirmResetDatabase"
-              class="mr-2"
-              :style="getButtonStyle()"
-            >
-              <v-icon class="mr-1">mdi-delete</v-icon>
-              Reset
-            </v-btn>
-            <v-btn
               color="primary"
               size="small"
               @click="updateItemDatabase"
@@ -259,7 +249,7 @@
           </small>
         </div>
         
-        <div v-if="isLoadingDatabase && !steamLoginForm.showForm" class="d-flex align-center my-4">
+                  <div v-if="isLoadingDatabase" class="d-flex align-center my-4">
           <v-progress-circular indeterminate color="primary" class="mr-3"></v-progress-circular>
           <div :style="getNormalTextStyle()">Loading database status...</div>
         </div>
@@ -269,12 +259,7 @@
         </div>
         
         <div v-if="!isLoadingDatabase" class="database-info">
-          <div class="d-flex mb-2">
-            <v-icon class="mr-2">mdi-steam</v-icon>
-            <span :style="getNormalTextStyle()">
-              <strong>Steam Login:</strong> {{ steamLoginStatus.loggedIn ? `Signed in as ${steamLoginStatus.username}` : 'Signed Out' }}
-            </span>
-          </div>
+          <!-- Steam login status removed - no longer needed -->
 
           <div class="d-flex mb-2">
             <v-icon class="mr-2">mdi-database</v-icon>
@@ -302,78 +287,12 @@
             ></v-progress-linear>
           </div>
           
-          <!-- Show the database info or login form based on state -->
-          <div v-if="steamLoginForm.showForm" class="pa-4" :style="getServerBoxStyle()">
-            <h3 :style="getSubtitleStyle()" class="mb-3">Steam Login Required</h3>
-            <p :style="getNormalTextStyle()">{{ steamLoginStatus.message }}</p>
-            
-            <v-form @submit.prevent="handleSteamLogin" class="mt-4">
-              <v-text-field
-                v-model="steamLoginForm.username"
-                label="Steam Username"
-                variant="outlined"
-                :disabled="steamLoginForm.loading"
-                required
-              ></v-text-field>
-              
-              <v-text-field
-                v-model="steamLoginForm.password"
-                label="Steam Password"
-                type="password"
-                variant="outlined"
-                :disabled="steamLoginForm.loading"
-                required
-              ></v-text-field>
-              
-              <v-btn
-                type="submit"
-                color="primary"
-                :loading="steamLoginForm.loading"
-                :disabled="steamLoginForm.loading"
-                class="mt-3"
-              >
-                Login to Steam
-              </v-btn>
-            </v-form>
-          </div>
+          <!-- Steam login form removed - no longer needed -->
         </div>
       </div>
     </div>
     
-    <!-- Reset Database Confirmation Dialog -->
-    <v-dialog v-model="showResetConfirmDialog" max-width="400">
-      <v-card>
-        <v-card-title class="text-h5">Reset Database?</v-card-title>
-        <v-card-text>
-          <p class="mb-2">This will delete ALL downloaded data including:</p>
-          <ul class="mb-4">
-            <li>All item images</li>
-            <li>Downloaded Rust client files</li>
-            <li>Steam credentials & login cache</li>
-            <li>Item database</li>
-          </ul>
-          <p class="text-error">This action cannot be undone!</p>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer></v-spacer>
-          <v-btn
-            color="grey-darken-1"
-            variant="text"
-            @click="showResetConfirmDialog = false"
-          >
-            Cancel
-          </v-btn>
-          <v-btn
-            color="error"
-            variant="text"
-            @click="resetDatabase"
-            :loading="isResetting"
-          >
-            Reset Database
-          </v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <!-- Reset Database functionality removed -->
     </div>
   </template>
   
@@ -448,26 +367,11 @@ const progressInfo = ref({
   message: ''
 });
 
-// Add Steam login form state
-const steamLoginForm = ref({
-  username: '',
-  password: '',
-  loading: false,
-  showForm: false
-});
-
-// Add the following to your data section
-const steamLoginStatus = ref({
-  loggedIn: false,
-  username: '',
-  message: ''
-});
+// Steam login functionality removed - no longer needed
 
 const errorMessage = ref('');
 
-// Add these variables
-const showResetConfirmDialog = ref(false);
-const isResetting = ref(false);
+// Reset functionality removed
 
 onMounted(async () => {
   try {
@@ -502,7 +406,6 @@ onMounted(async () => {
     
     // Important: Fetch both server data and database status on component mount
     await Promise.all([
-      checkSteamLoginStatus().catch(err => console.error('Error checking Steam login:', err)),
       fetchServerData().catch(err => console.error('Error fetching server data:', err)),
       fetchDatabaseStatus().catch(err => console.error('Error fetching database status:', err))
     ]);
@@ -631,29 +534,7 @@ const updateItemDatabase = async () => {
     message: 'Starting database update...'
   };
 
-  console.log('Checking Steam login status...');
-  
-  // First check if the user is logged into Steam
-  try {
-    const steamCheckResponse = await axios.get('/api/steam/login-status');
-    console.log('Steam login status:', steamCheckResponse.data);
-    
-    if (!steamCheckResponse.data.loggedIn) {
-      progressInfo.value.message = 'Steam login required: ' + steamCheckResponse.data.message;
-      steamLoginForm.value.showForm = true;
-      isUpdatingDatabase.value = false;
-      return;
-    }
-  } catch (error) {
-    console.error('Error checking Steam login status:', error);
-    progressInfo.value = {
-      active: true,
-      progress: 0,
-      message: `Error: ${error.message}`
-    };
-    isUpdatingDatabase.value = false;
-    return;
-  }
+  // Steam login check removed - no longer needed
   
   try {
     // Start the database update
@@ -695,71 +576,7 @@ function getProgressColor(progress) {
   return 'green';
 }
 
-// Improve the Steam login handler to automatically start the database update after successful login
-async function handleSteamLogin() {
-  try {
-    steamLoginForm.value.loading = true;
-    
-    const response = await axios.post('/api/steam/login', {
-      username: steamLoginForm.value.username,
-      password: steamLoginForm.value.password
-    });
-    
-    if (response.data.success) {
-      // Login successful - clear the form
-      steamLoginForm.value.username = '';
-      steamLoginForm.value.password = '';
-      steamLoginForm.value.showForm = false;
-      
-      // Show success message
-      progressInfo.value = {
-        active: true,
-        progress: 20,
-        message: 'Steam login successful! Starting database update...'
-      };
-      
-      // After a short delay, start the database update
-      setTimeout(() => {
-        updateItemDatabase();
-      }, 1000);
-      
-      // Refresh the login status
-      refreshLoginStatus();
-    } else {
-      // Login failed
-      progressInfo.value = {
-        active: true,
-        progress: 0,
-        message: `Steam login failed: ${response.data.error || 'Unknown error'}`
-      };
-    }
-  } catch (error) {
-    console.error('Error during Steam login:', error);
-    progressInfo.value = {
-      active: true,
-      progress: 0,
-      message: `Error: ${error.response?.data?.error || error.message || 'Unknown error during login'}`
-    };
-  } finally {
-    steamLoginForm.value.loading = false;
-  }
-}
-
-// Add this method to check Steam login status
-async function checkSteamLoginStatus() {
-  try {
-    const response = await axios.get('/api/steam/login-status');
-    steamLoginStatus.value = response.data;
-    console.log('Steam login status:', steamLoginStatus.value);
-  } catch (error) {
-    console.error('Error checking Steam login status:', error);
-  }
-}
-
-// You can also add a method to refresh the login status after successful login
-function refreshLoginStatus() {
-  checkSteamLoginStatus();
-}
+// Steam login functionality removed - no longer needed
 
 // Add this function to handle fetching server data
 async function fetchServerData() {
@@ -778,65 +595,7 @@ async function fetchServerData() {
   }
 }
 
-// Add functions for database reset
-function confirmResetDatabase() {
-  showResetConfirmDialog.value = true;
-}
-
-async function resetDatabase() {
-  try {
-    isResetting.value = true;
-    
-    // Call the API to reset the database
-    const response = await axios.post('/api/items/reset');
-    
-    if (response.data.success) {
-      progressInfo.value = {
-        active: true,
-        progress: 100,
-        message: 'Database successfully reset!'
-      };
-      
-      // Reset steam login status
-      steamLoginStatus.value = {
-        loggedIn: false,
-        username: '',
-        message: 'Steam login required'
-      };
-      
-      // Clear database stats
-      databaseStats.value = {
-        itemCount: 0,
-        lastUpdated: null,
-        error: null
-      };
-      
-      // Show the login form
-      steamLoginForm.value.showForm = true;
-      
-      // Hide the progress after a delay
-      setTimeout(() => {
-        progressInfo.value.active = false;
-      }, 3000);
-    } else {
-      progressInfo.value = {
-        active: true,
-        progress: 0,
-        message: `Reset failed: ${response.data.error || 'Unknown error'}`
-      };
-    }
-  } catch (error) {
-    console.error('Error resetting database:', error);
-    progressInfo.value = {
-      active: true,
-      progress: 0,
-      message: `Error: ${error.response?.data?.error || error.message}`
-    };
-  } finally {
-    isResetting.value = false;
-    showResetConfirmDialog.value = false;
-  }
-}
+// Database reset functionality removed
 
   </script>
 

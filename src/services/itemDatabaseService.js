@@ -37,17 +37,15 @@ class ItemDatabaseService {
     if (!this.items) {
       await this.loadItems();
     }
-    // Convert to string if it's a number
-    const idStr = id.toString();
     
-    // Try direct lookup first
-    if (this.items[idStr]) {
-      return this.items[idStr];
+    // Try direct lookup first (by shortname)
+    if (this.items[id]) {
+      return this.items[id];
     }
     
-    // If not found, try to find by numericId (some databases might store negative IDs differently)
+    // If not found, try to find by numericId
     for (const key in this.items) {
-      if (this.items[key].numericId === parseInt(idStr)) {
+      if (this.items[key].numericId === parseInt(id)) {
         return this.items[key];
       }
     }
@@ -68,6 +66,55 @@ class ItemDatabaseService {
     });
     
     return result;
+  }
+
+  async updateDatabase() {
+    try {
+      this.loading = true;
+      this.error = null;
+      
+      const response = await axios.post('/api/items/update');
+      if (response.data.success) {
+        // Clear cache to force reload
+        this.items = null;
+        return { success: true, message: response.data.message };
+      } else {
+        this.error = 'Failed to update database';
+        return { success: false, error: this.error };
+      }
+    } catch (error) {
+      this.error = error.message || 'Network error';
+      console.error('Error updating database:', error);
+      return { success: false, error: this.error };
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  async searchItems(query) {
+    if (!this.items) {
+      await this.loadItems();
+    }
+    
+    if (!query || query.trim() === '') {
+      return {};
+    }
+    
+    const searchTerm = query.toLowerCase().trim();
+    const results = {};
+    
+    for (const key in this.items) {
+      const item = this.items[key];
+      if (
+        item.name.toLowerCase().includes(searchTerm) ||
+        item.shortname.toLowerCase().includes(searchTerm) ||
+        item.category.toLowerCase().includes(searchTerm)
+      ) {
+        results[key] = item;
+      }
+    }
+    
+    return results;
   }
 }
 

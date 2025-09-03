@@ -13,6 +13,7 @@
     "@liamcottle/rustplus.js": "git+https://github.com/JulianMa/rustplus.js.git#9f87ea17f3d330c23615757130855590ad84ac22",
     "@mdi/font": "7.0.96",
     "adm-zip": "^0.5.16",
+    "axios": "^1.6.0",
     "cors": "^2.8.5",
     "express": "^4.17.1",
     "node-cron": "^3.0.3",

@@ -64,6 +64,17 @@ io.on('connection', (socket) => {
   // More socket handlers...
 });
 
+// Initialize the item database and serve item images
+(async () => {
+  try {
+    console.log('Initializing item database...');
+    await rustAssetManager.loadDatabase();
+    console.log('Item database initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize item database:', error);
+  }
+})();
+
 // Serve item images
 rustAssetManager.serveItemImages(app);
 
@@ -93,6 +104,74 @@ app.get('/api/items', async (req, res) => {
   }
 });
 
+// Debug endpoint to check database status
+app.get('/api/items/debug', (req, res) => {
+  try {
+    const fs = require('fs');
+    const path = require('path');
+    const databasePath = path.join(__dirname, 'data', 'itemDatabase.json');
+    const imagesPath = path.join(__dirname, 'data', 'images');
+    
+    const databaseExists = fs.existsSync(databasePath);
+    const imagesExist = fs.existsSync(imagesPath);
+    
+    let databaseSize = 0;
+    let imageCount = 0;
+    
+    if (databaseExists) {
+      const stats = fs.statSync(databasePath);
+      databaseSize = stats.size;
+      
+      try {
+        const data = JSON.parse(fs.readFileSync(databasePath, 'utf8'));
+        const itemCount = Object.keys(data.items || {}).length;
+        res.json({
+          success: true,
+          database: {
+            exists: true,
+            size: databaseSize,
+            itemCount: itemCount,
+            lastModified: stats.mtime
+          },
+          images: {
+            exists: imagesExist,
+            count: imagesExist ? fs.readdirSync(imagesPath).filter(f => f.endsWith('.png')).length : 0
+          },
+          cache: {
+            loaded: itemDatabaseCache !== null,
+            cacheSize: itemDatabaseCache ? Object.keys(itemDatabaseCache).length : 0
+          }
+        });
+      } catch (parseError) {
+        res.json({
+          success: false,
+          error: 'Database file exists but is corrupted',
+          database: {
+            exists: true,
+            size: databaseSize,
+            lastModified: stats.mtime
+          },
+          parseError: parseError.message
+        });
+      }
+    } else {
+      res.json({
+        success: false,
+        error: 'Database file does not exist',
+        database: {
+          exists: false
+        },
+        images: {
+          exists: imagesExist
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error checking database status:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 app.get('/api/items/:id', (req, res) => {
   try {
     const item = rustAssetManager.getItemById(req.params.id);
@@ -106,19 +185,59 @@ app.get('/api/items/:id', (req, res) => {
   }
 });
 
-app.post('/api/items/update', async (req, res) => {
+app.get('/api/items/:id/image', (req, res) => {
   try {
-    const steamLoginStatus = await rustAssetManager.checkSteamLogin();
+    const itemId = req.params.id;
+    console.log(`Image request for item ID: ${itemId}`);
     
-    // If not logged in, let the client know
-    if (!steamLoginStatus.loggedIn) {
-      return res.status(400).json({
-        success: false,
-        requireSteamLogin: true,
-        message: steamLoginStatus.message
-      });
+    // Try to get item by numeric ID first (for Rust+ API compatibility)
+    let item = rustAssetManager.getItemByNumericId(itemId);
+    
+    // If not found by numeric ID, try by shortname
+    if (!item) {
+      item = rustAssetManager.getItemById(itemId);
     }
     
+    if (item && item.shortname) {
+      // Check if the image file actually exists
+      const fs = require('fs');
+      const path = require('path');
+      const imagePath = path.join(__dirname, 'data', 'images', `${item.shortname}.png`);
+      
+      if (fs.existsSync(imagePath)) {
+        // Redirect to the static image endpoint
+        res.redirect(`/api/items/images/${item.shortname}.png`);
+      } else {
+        console.log(`Image file not found at: ${imagePath}`);
+        // Image file doesn't exist, return a 404
+        res.status(404).json({ 
+          success: false, 
+          error: 'Item image file not found',
+          itemId: itemId,
+          shortname: item.shortname,
+          imagePath: imagePath
+        });
+      }
+    } else {
+      console.log(`Item not found in database for ID: ${itemId}`);
+      res.status(404).json({ 
+        success: false, 
+        error: 'Item not found in database',
+        itemId: itemId
+      });
+    }
+  } catch (error) {
+    console.error('Error serving item image:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      itemId: req.params.id
+    });
+  }
+});
+
+app.post('/api/items/update', async (req, res) => {
+  try {
     // Start update in background
     await rustAssetManager.updateItemDatabase(io);
     res.json({ success: true, message: 'Database update started' });
@@ -189,40 +308,7 @@ app.post('/api/pairing/listen', async (req, res) => {
     }
 });
 
-// Callback endpoint for Steam auth
-app.get('/callback', async (req, res) => {
-    try {
-        console.log('Callback received with params:', req.query);
-        const authToken = req.query.token;
-        const steamId = req.query.steamId;
-        
-        if (!authToken) {
-            console.error('Token missing from callback');
-            res.status(400).send('Token missing from request!');
-            return;
-        }
-
-        res.send(`
-            <html>
-                <body>
-                    <script>
-                        console.log('Sending auth data to opener');
-                        window.opener.postMessage({
-                            type: 'RUST_PLUS_AUTH',
-                            token: '${authToken}',
-                            steamId: '${steamId || ''}'
-                        }, window.location.origin);
-                        window.close();
-                    </script>
-                    Steam Account successfully linked with Rust+. You can close this window.
-                </body>
-            </html>
-        `);
-    } catch (error) {
-        console.error('Callback error:', error);
-        res.status(500).send('Failed to process callback');
-    }
-});
+// Steam callback endpoint removed - no longer needed
 
 // New endpoint to confirm pairing and save server details
 app.post('/api/pairing/confirm', async (req, res) => {
@@ -467,10 +553,40 @@ app.post('/api/undercutter/calculate', async (req, res) => {
 app.get('/api/rustplus/vendingMachines', async (req, res) => {
   try {
     const prefix = req.query.prefix || '';
-    const vendingMachines = await rustplusService.getCachedMapMarkers();
+    console.log('Vending machines request received for prefix:', prefix);
+    
+    // Check if Rust+ is connected first
+    const status = rustplusService.getStatus();
+    
+    if (!status.connected) {
+      return res.status(400).json({
+        success: false,
+        error: 'Not connected to Rust+ server'
+      });
+    }
+    
+    // Check service readiness
+    const readiness = rustplusService.isReady();
+    
+    const vendingMachines = rustplusService.getCachedMapMarkers();
+    
+    // Check if we have map markers data
+    if (!vendingMachines || !vendingMachines.markers) {
+      return res.status(404).json({
+        success: false,
+        error: 'No map markers available. Please wait for the connection to stabilize.',
+        details: {
+          serviceReady: readiness,
+          suggestion: readiness.connected && !readiness.hasMapMarkers 
+            ? 'Try refreshing markers or wait a moment for data to load'
+            : 'Ensure Rust+ connection is established first'
+        }
+      });
+    }
     
     // Extract the markers array from the returned object
-    const markers = vendingMachines.markers || [];
+    const markers = vendingMachines.markers;
+    
     const allShops = markers.filter(marker => marker.type === 'VendingMachine' || marker.type === 3);
     
     // Transform all shops to the standardized format
@@ -498,7 +614,67 @@ app.get('/api/rustplus/vendingMachines', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Error getting vending machines:', error);
+    // Only log unexpected errors, not the expected "no map markers" case
+    if (!error.message.includes('No map markers available')) {
+      console.error('Error getting vending machines:', error);
+    }
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Add endpoint to check service readiness
+app.get('/api/rustplus/status', (req, res) => {
+  try {
+    const status = rustplusService.getStatus();
+    const readiness = rustplusService.isReady();
+    
+    res.json({
+      success: true,
+      data: {
+        ...status,
+        readiness
+      }
+    });
+  } catch (error) {
+    console.error('Error getting service status:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Add endpoint to manually refresh map markers
+app.post('/api/rustplus/refresh-markers', async (req, res) => {
+  try {
+    const markers = await rustplusService.refreshMapMarkers();
+    res.json({
+      success: true,
+      message: 'Map markers refreshed successfully',
+      data: markers
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Add endpoint to manually fetch map markers (for debugging)
+app.get('/api/rustplus/fetch-markers', async (req, res) => {
+  try {
+    const markers = await rustplusService.getMapMarkers();
+    res.json({
+      success: true,
+      message: 'Map markers fetched successfully',
+      data: markers
+    });
+  } catch (error) {
+    console.error('Error fetching map markers:', error);
     res.status(500).json({
       success: false,
       error: error.message
@@ -530,7 +706,7 @@ app.get('/api/rustplus/vendingMachine/:id', async (req, res) => {
     if (!mapMarkers || !mapMarkers.markers) {
       return res.status(404).json({ 
         success: false, 
-        error: 'Could not retrieve map markers' 
+        error: 'No map markers available. Please wait for the connection to stabilize.' 
       });
     }
     
@@ -568,76 +744,9 @@ app.get('/api/rustplus/vendingMachine/:id', async (req, res) => {
   }
 });
 
-// Steam login endpoints
-app.get('/api/steam/login-status', async (req, res) => {
-  try {
-    const status = await rustAssetManager.checkSteamLogin();
-    res.json({
-      success: true,
-      ...status
-    });
-  } catch (error) {
-    console.error('Error checking Steam login:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// Steam login endpoints removed - no longer needed
 
-app.post('/api/steam/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    
-    // If no credentials provided, check login status
-    if (!username || !password) {
-      const loginStatus = await rustAssetManager.checkSteamLogin();
-      return res.json({
-        success: true,
-        loggedIn: loginStatus.loggedIn,
-        username: loginStatus.username,
-        message: 'Ready for credentials'
-      });
-    }
-    
-    try {
-      // Attempt to login with provided credentials
-      const loginResult = await rustAssetManager.steamLogin(username, password);
-      
-      return res.json({
-        success: true,
-        ...loginResult
-      });
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        error: 'Steam login failed',
-        details: error.message
-      });
-    }
-  } catch (error) {
-    console.error('Error during Steam login:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
-
-// Add this endpoint to handle database reset
-app.post('/api/items/reset', async (req, res) => {
-  try {
-    // Call the reset function from RustAssetManager
-    await rustAssetManager.resetItemDatabase();
-    res.json({ success: true, message: 'Database successfully reset' });
-  } catch (error) {
-    console.error('Error resetting database:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-});
+// Database reset endpoint removed - no longer needed
 
 // Start server
 server.listen(3001, () => {
