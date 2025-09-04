@@ -192,7 +192,7 @@
           </v-btn>
         </div>
       </div>
-    </div>
+                    </div>
           </div>
 </template>
 
@@ -376,7 +376,7 @@ async function loadVendingMachines() {
                     isUndercutting: isUndercutting,
                     pricePerUnit: enemyPricePerUnit
                   });
-                    } else {
+    } else {
                   console.log(`Excluding ${enemyShop.shopName} - insufficient stock (amountInStock: ${enemyStock})`);
                 }
               }
