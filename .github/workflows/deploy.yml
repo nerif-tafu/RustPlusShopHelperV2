@@ -38,7 +38,7 @@ jobs:
         sudo mkdir -p /opt/rustplus-shop-helper
         
         # Copy built files
-        sudo cp -r dist/* /opt/rustplus-shop-helper/
+        sudo cp -r dist /opt/rustplus-shop-helper/
         sudo cp -r server /opt/rustplus-shop-helper/
         sudo cp package.json /opt/rustplus-shop-helper/
         sudo cp package-lock.json /opt/rustplus-shop-helper/
