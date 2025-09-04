@@ -292,6 +292,41 @@
       </div>
     </div>
     
+    <!-- Price Undercutter Settings Section -->
+    <v-divider class="my-4"></v-divider>
+    <div class="undercutter-settings-section mb-4" :style="getBoxStyle()">
+      <div class="pa-4">
+        <div class="d-flex justify-space-between align-center mb-3">
+          <div class="text-h6" :style="getTitleStyle()">Price Undercutter</div>
+        </div>
+        
+        <div class="mb-3">
+          <small :style="getCaptionStyle()">
+            <v-icon small>mdi-information-outline</v-icon>
+            Configure your shop prefix to identify which vending machines belong to you for price comparison
+          </small>
+        </div>
+        
+        <div class="shop-prefix-config">
+          <v-text-field
+            v-model="shopPrefix"
+            label="Your Shop Prefix"
+            placeholder="Enter your shop name prefix..."
+            class="shop-prefix-input"
+            hide-details
+          ></v-text-field>
+          <v-btn 
+            @click="saveShopPrefix" 
+            color="primary" 
+            class="save-btn mt-3"
+            :style="getButtonStyle()"
+          >
+            Save Shop Prefix
+          </v-btn>
+        </div>
+      </div>
+    </div>
+    
     <!-- Reset Database functionality removed -->
     </div>
   </template>
@@ -366,6 +401,9 @@ const progressInfo = ref({
   progress: 0,
   message: ''
 });
+
+// Shop prefix for price undercutter
+const shopPrefix = ref(localStorage.getItem('shopPrefix') || '');
 
 // Steam login functionality removed - no longer needed
 
@@ -574,6 +612,11 @@ function getProgressColor(progress) {
   if (progress < 30) return 'red';
   if (progress < 70) return 'orange';
   return 'green';
+}
+
+// Save shop prefix for price undercutter
+function saveShopPrefix() {
+  localStorage.setItem('shopPrefix', shopPrefix.value);
 }
 
 // Steam login functionality removed - no longer needed

@@ -1,0 +1,95 @@
+name: Deploy RustPlus Shop Helper V2
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build application
+      run: npm run build
+      
+    - name: Stop existing application
+      run: |
+        # Stop the systemd service
+        sudo systemctl stop rustplus-shop-helper || true
+        
+    - name: Deploy application
+      run: |
+        # Create deployment directory if it doesn't exist
+        sudo mkdir -p /opt/rustplus-shop-helper
+        
+        # Copy built files
+        sudo cp -r dist/* /opt/rustplus-shop-helper/
+        sudo cp -r server /opt/rustplus-shop-helper/
+        sudo cp package.json /opt/rustplus-shop-helper/
+        sudo cp package-lock.json /opt/rustplus-shop-helper/
+        
+        # Set proper ownership
+        sudo chown -R $USER:$USER /opt/rustplus-shop-helper
+        
+        # Install production dependencies
+        cd /opt/rustplus-shop-helper
+        npm ci --production
+        
+    - name: Create systemd service file
+      run: |
+        sudo tee /etc/systemd/system/rustplus-shop-helper.service > /dev/null <<EOF
+        [Unit]
+        Description=RustPlus Shop Helper V2
+        After=network.target
+        
+        [Service]
+        Type=simple
+        User=$USER
+        WorkingDirectory=/opt/rustplus-shop-helper
+        ExecStart=/usr/bin/node server/server.js
+        Restart=always
+        RestartSec=10
+        Environment=NODE_ENV=production
+        
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+        
+    - name: Start application with systemd
+      run: |
+        # Reload systemd and start the service
+        sudo systemctl daemon-reload
+        sudo systemctl enable rustplus-shop-helper
+        sudo systemctl start rustplus-shop-helper
+        
+    - name: Verify deployment
+      run: |
+        # Wait a moment for the application to start
+        sleep 5
+        
+        # Check if the service is running
+        sudo systemctl status rustplus-shop-helper --no-pager
+        
+        # Optional: Health check
+        curl -f http://localhost:3001/api/health || echo "Health check failed - application may still be starting"
+        
+    - name: Cleanup old builds
+      run: |
+        # Keep only the last 3 builds
+        cd /opt
+        ls -t | grep rustplus-shop-helper-backup | tail -n +4 | xargs -r rm -rf

@@ -1,355 +1,626 @@
 <template>
-  <v-container>
-    <!-- Header with shop prefix input -->
-    <v-row>
-      <v-col>
-        <h2>Price Undercutter</h2>
-        <v-row align="center">
-          <v-col cols="12" sm="6">
-            <v-text-field
-              v-model="shopPrefix"
-              label="Your Shop Prefix"
-              placeholder="Enter your shop name prefix..."
-              hide-details
-            ></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="3">
-            <v-btn @click="saveShopPrefix" color="primary">Save & Refresh</v-btn>
-          </v-col>
-          <v-col cols="12" sm="3">
-            <v-btn @click="refreshVendorData" color="secondary" :loading="isRefreshing">
-              <v-icon left>mdi-refresh</v-icon>
-              Refresh Data
-            </v-btn>
-          </v-col>
-        </v-row>
-      </v-col>
-    </v-row>
+  <div class="undercutter-container">
 
-    <!-- Error message display -->
-    <v-row v-if="errorMessage">
-      <v-col>
-        <v-alert type="warning" closable @click:close="errorMessage = ''">
-          <h4>Notice</h4>
-          <p>{{ errorMessage }}</p>
-          <v-btn v-if="rustplusStatus.connected" @click="loadVendingMachines" color="primary" size="small" class="mt-2">
-            <v-icon>mdi-refresh</v-icon>
-            Retry
-          </v-btn>
-        </v-alert>
-      </v-col>
-    </v-row>
+    <!-- Current Undercuts Section -->
+    <div v-if="undercutItems.length > 0" class="section-container">
+      <h3 class="section-title">Current Undercuts</h3>
+      <p class="section-description">Items where competitors are undercutting your prices</p>
+      
+      <div v-for="listing in undercutItems" :key="`undercut-${listing.itemId}-${listing.allyShop.shopId}`" class="comparison-card undercut-card">
+        <!-- Item header -->
+        <div class="item-header">
+          <div class="item-info">
+            <img v-if="listing.itemImage" :src="listing.itemImage" @error="handleImageError" class="item-icon" />
+            <v-icon v-else class="item-icon">mdi-package</v-icon>
+            <span class="item-name">{{ listing.itemName }}</span>
+          </div>
+        </div>
 
-    <!-- Shops summary -->
-    <v-row>
-      <v-col cols="12" sm="4">
-        <v-card>
-          <v-card-title>Your Shops</v-card-title>
-          <v-card-text class="text-h3 text-center">{{ myShops.length }}</v-card-text>
-        </v-card>
-      </v-col>
-      <v-col cols="12" sm="4">
-        <v-card>
-          <v-card-title>Competitor Shops</v-card-title>
-          <v-card-text class="text-h3 text-center">{{ competitorShops.length }}</v-card-text>
-        </v-card>
-      </v-col>
-      <v-col cols="12" sm="4">
-        <v-card>
-          <v-card-title>Items Undercut</v-card-title>
-          <v-card-text class="text-h3 text-center">{{ undercutItems.length }}</v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
+        <!-- Comparison table -->
+        <div class="comparison-table">
+          <div class="table-header">
+            <div class="header-cell">Shop Name</div>
+            <div class="header-cell">Sell</div>
+            <div class="header-cell">For</div>
+            <div class="header-cell">Ratio</div>
+          </div>
 
-    <!-- Loading indicator -->
-    <v-row v-if="isLoading">
-      <v-col class="text-center">
-        <v-progress-circular indeterminate color="primary"></v-progress-circular>
-        <div>Loading data...</div>
-      </v-col>
-    </v-row>
+          <!-- Your price row -->
+          <div class="table-row your-price">
+            <div class="cell shop-name">{{ listing.allyShop.shopName }}</div>
+            <div class="cell sell-display">
+              <div class="item-stack">
+                <img v-if="listing.itemImage" :src="listing.itemImage" @error="handleImageError" class="stack-icon" />
+                <v-icon v-else class="stack-icon">mdi-package</v-icon>
+                <span class="stack-amount">×{{ listing.allyShop.quantity }}</span>
+              </div>
+            </div>
+            <div class="cell for-display">
+              <div class="currency-stack">
+                <img v-if="getCurrencyImage(listing.allyShop.currencyId)" :src="getCurrencyImage(listing.allyShop.currencyId)" @error="handleImageError" class="stack-icon" />
+                <v-icon v-else class="stack-icon">mdi-currency-usd</v-icon>
+                <span class="stack-amount">×{{ listing.allyShop.price }}</span>
+              </div>
+            </div>
+            <div class="cell ratio">1:{{ calculateRatio(listing.allyShop.price, listing.allyShop.quantity) }}</div>
+          </div>
 
-    <!-- Connection error message -->
-    <v-row v-else-if="!rustplusStatus.connected">
-      <v-col>
-        <v-alert type="error">
-          <h3>Not Connected to Rust+</h3>
-          <p>You need to connect to Rust+ to use the Undercutter feature.</p>
-        </v-alert>
-      </v-col>
-    </v-row>
+          <!-- Competitor rows -->
+          <div v-for="enemy in listing.enemyShops" :key="enemy.shopId" 
+               :class="['table-row', 'competitor-price', { 'not-undercutting': !enemy.isUndercutting }]">
+            <div class="cell shop-name">{{ enemy.shopName }}</div>
+            <div class="cell sell-display">
+              <div class="item-stack">
+                <img v-if="listing.itemImage" :src="listing.itemImage" @error="handleImageError" class="stack-icon" />
+                <v-icon v-else class="stack-icon">mdi-package</v-icon>
+                <span class="stack-amount">×{{ enemy.quantity || 1 }}</span>
+              </div>
+            </div>
+            <div class="cell for-display">
+              <div class="currency-stack">
+                <img v-if="getCurrencyImage(enemy.currencyId)" :src="getCurrencyImage(enemy.currencyId)" @error="handleImageError" class="stack-icon" />
+                <v-icon v-else class="stack-icon">mdi-currency-usd</v-icon>
+                <span class="stack-amount">×{{ enemy.price }}</span>
+              </div>
+            </div>
+            <div class="cell ratio">1:{{ calculateRatio(enemy.price, enemy.quantity || 1) }}</div>
+          </div>
+        </div>
 
-    <!-- No shops with prefix message -->
-    <v-row v-else-if="myShops.length === 0 && shopPrefix">
-      <v-col>
+        <!-- Recommendation -->
+        <div class="recommendation">
+          <span class="recommendation-text">Change your cost to {{ getCompetitivePrice(listing) }} {{ getCurrencyNameSync(listing.allyShop.currencyId) }} or less.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- All Your Items Section -->
+    <div v-if="allItems.length > 0" class="section-container">
+      <h3 class="section-title">All Your Items</h3>
+      <p class="section-description">All items you're selling with competitor price comparisons</p>
+      
+      <div v-for="item in allItems" :key="`all-${item.itemId}-${item.allyShop.shopId}`" class="comparison-card all-items-card">
+        <!-- Item header -->
+        <div class="item-header">
+          <div class="item-info">
+            <img v-if="item.itemImage" :src="item.itemImage" @error="handleImageError" class="item-icon" />
+            <v-icon v-else class="item-icon">mdi-package</v-icon>
+            <span class="item-name">{{ item.itemName }}</span>
+          </div>
+        </div>
+
+        <!-- Comparison table -->
+        <div class="comparison-table">
+          <div class="table-header">
+            <div class="header-cell">Shop Name</div>
+            <div class="header-cell">Sell</div>
+            <div class="header-cell">For</div>
+            <div class="header-cell">Ratio</div>
+          </div>
+
+          <!-- Your price row -->
+          <div class="table-row your-price">
+            <div class="cell shop-name">{{ item.allyShop.shopName }}</div>
+            <div class="cell sell-display">
+              <div class="item-stack">
+                <img v-if="getItemImage(item)" :src="getItemImage(item)" @error="handleImageError" class="stack-icon" />
+                <v-icon v-else class="stack-icon">mdi-package</v-icon>
+                <span class="stack-amount">×{{ item.allyShop.quantity }}</span>
+              </div>
+            </div>
+            <div class="cell for-display">
+              <div class="currency-stack">
+                <img v-if="getCurrencyImage(item.allyShop.currencyId)" :src="getCurrencyImage(item.allyShop.currencyId)" @error="handleImageError" class="stack-icon" />
+                <v-icon v-else class="stack-icon">mdi-currency-usd</v-icon>
+                <span class="stack-amount">×{{ item.allyShop.price }}</span>
+              </div>
+            </div>
+            <div class="cell ratio">1:{{ calculateRatio(item.allyShop.price, item.allyShop.quantity) }}</div>
+          </div>
+
+          <!-- Competitor rows (if any) -->
+          <div v-if="item.enemyShops && item.enemyShops.length > 0">
+            <div v-for="enemy in item.enemyShops" :key="enemy.shopId" class="table-row competitor-price">
+              <div class="cell shop-name">{{ enemy.shopName }}</div>
+              <div class="cell sell-display">
+                <div class="item-stack">
+                  <img v-if="getItemImage(item)" :src="getItemImage(item)" @error="handleImageError" class="stack-icon" />
+                  <v-icon v-else class="stack-icon">mdi-package</v-icon>
+                  <span class="stack-amount">×{{ enemy.quantity || 1 }}</span>
+                </div>
+              </div>
+              <div class="cell for-display">
+                <div class="currency-stack">
+                  <img v-if="getCurrencyImage(enemy.currencyId)" :src="getCurrencyImage(enemy.currencyId)" @error="handleImageError" class="stack-icon" />
+                  <v-icon v-else class="stack-icon">mdi-currency-usd</v-icon>
+                  <span class="stack-amount">×{{ enemy.price }}</span>
+                </div>
+              </div>
+              <div class="cell ratio">1:{{ calculateRatio(enemy.price, enemy.quantity || 1) }}</div>
+            </div>
+          </div>
+
+          <!-- No competitors message -->
+          <div v-else class="no-competitors">
+            <div class="table-row no-competitors-row">
+              <div class="cell shop-name">No competitors found</div>
+              <div class="cell sell-display">-</div>
+              <div class="cell for-display">-</div>
+              <div class="cell ratio">-</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- No data messages -->
+    <div v-if="undercutItems.length === 0 && allItems.length === 0" class="info-box">
         <v-alert type="info">
-          <h3>No Shops Found</h3>
-          <p>No vending machines matching your shop prefix "{{ shopPrefix }}" were found.</p>
-          <p>Check that your prefix is correct and that your shops are online and working.</p>
+        <h3>No Items Found</h3>
+        <p>No vending machines matching your shop prefix were found.</p>
+        <p>Please configure your shop prefix in the Settings page.</p>
         </v-alert>
-      </v-col>
-    </v-row>
-
-    <!-- No prefix set message -->
-    <v-row v-else-if="!shopPrefix">
-      <v-col>
-        <v-alert type="info">
-          <h3>Set Your Shop Prefix</h3>
-          <p>Enter your shop name prefix above to identify which vending machines belong to you.</p>
-        </v-alert>
-      </v-col>
-    </v-row>
+    </div>
 
     <!-- No undercuts message -->
-    <v-row v-else-if="undercutItems.length === 0 && myShops.length > 0">
-      <v-col>
+    <div v-else-if="undercutItems.length === 0 && allItems.length > 0" class="success-box">
         <v-alert type="success">
           <h3>No Undercuts Found</h3>
           <p>Great news! None of your items are being undercut by competitors.</p>
         </v-alert>
-      </v-col>
-    </v-row>
-
-    <!-- Undercut items list -->
-    <v-row v-else>
-      <v-col>
-        <h3 class="mb-4">Items Being Undercut</h3>
-        <v-card v-for="listing in undercutItems" :key="`${listing.itemId}-${listing.allyShop.shopId}`" class="mb-5" theme="dark">
-          <v-card-title class="text-primary">
-            <v-img v-if="listing.itemImage" :src="listing.itemImage" @error="handleImageError" contain width="32" height="32" class="mr-2"></v-img>
-            {{ listing.itemName }} - {{ listing.allyShop.shopName }}
-          </v-card-title>
-
-          <div class="pa-2">
-            <v-table class="w-100" hover>
-              <thead>
-                <tr>
-                  <th class="text-left">Shop</th>
-                  <th class="text-left">Trade Details</th>
-                  <th class="text-right">Items per Currency</th>
-                </tr>
-              </thead>
-              <tbody>
-                <!-- Your price row -->
-                <tr>
-                  <td>Your shop</td>
-                  <td>
-                    <div class="d-flex align-center">
-                      <v-img v-if="listing.itemImage" :src="listing.itemImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
-                      <v-icon v-else class="mr-1">mdi-package</v-icon>
-                      ×{{ listing.allyShop.quantity }}
-                      <v-icon class="mx-2">mdi-arrow-right</v-icon>
-                      <v-img v-if="listing.allyShop.currencyImage" :src="listing.allyShop.currencyImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
-                      <v-icon v-else class="mr-1">mdi-currency-usd</v-icon>
-                      ×{{ listing.allyShop.price }}
                     </div>
-                  </td>
-                  <td class="text-right font-weight-bold">{{ calculateRatio(listing.allyShop.price, listing.allyShop.quantity) }}:1</td>
-                </tr>
-                
-                <!-- Competitor rows -->
-                <tr v-for="enemy in listing.enemyShops" :key="enemy.shopId">
-                  <td class="text-purple-lighten-3">{{ enemy.shopName }}</td>
-                  <td>
-                    <div class="d-flex align-center">
-                      <v-img v-if="listing.itemImage" :src="listing.itemImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
-                      <v-icon v-else class="mr-1">mdi-package</v-icon>
-                      ×{{ enemy.quantity || 1 }}
-                      <v-icon class="mx-2">mdi-arrow-right</v-icon>
-                      <v-img v-if="enemy.currencyImage" :src="enemy.currencyImage" @error="handleImageError" contain width="24" height="24" class="mr-1"></v-img>
-                      <v-icon v-else class="mr-1">mdi-currency-usd</v-icon>
-                      ×{{ enemy.price }}
-                    </div>
-                  </td>
-                  <td class="text-right font-weight-bold">{{ calculateRatio(enemy.price, enemy.quantity || 1) }}:1</td>
-                </tr>
-              </tbody>
-            </v-table>
+
+    <!-- Sticky Status Bar -->
+    <div class="sticky-status-bar">
+      <div class="status-content">
+        <div class="status-left">
+          <span v-if="lastUpdated" class="last-updated">
+            Last updated: {{ formatTime(lastUpdated) }}
+          </span>
+          <span v-else class="no-data">No data loaded</span>
+        </div>
+        <div class="status-right">
+          <v-btn 
+            @click="refreshAllData" 
+            :loading="isLoading"
+            color="primary" 
+            size="small"
+            class="refresh-btn"
+          >
+            <v-icon left>mdi-refresh</v-icon>
+            Refresh Data
+          </v-btn>
+        </div>
+      </div>
+    </div>
           </div>
-
-          <!-- Suggestion -->
-          <v-card-text class="text-center text-cyan-accent-2">
-            Change your cost to {{ getLowestEnemyPrice(listing) - 1 }} or less to match the competition.
-            <br><small class="text-grey-lighten-1">Currently undercut by {{ listing.undercutPercentage }}%</small>
-          </v-card-text>
-        </v-card>
-      </v-col>
-    </v-row>
-  </v-container>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { io } from 'socket.io-client';
+import itemDatabaseService from '../services/itemDatabaseService.js';
 
 // State variables
-const shopPrefix = ref(localStorage.getItem('shopPrefix') || '');
-const isLoading = ref(true);
 const undercutItems = ref([]);
-const rustplusStatus = ref({ connected: false });
 const myShops = ref([]);
 const competitorShops = ref([]);
-const errorMessage = ref('');
-const retryCount = ref(0);
-const maxRetries = 3;
-const isRefreshing = ref(false);
+const allItems = ref([]); // New state variable to hold all item listings
+const isLoading = ref(false);
+const lastUpdated = ref(null);
+const currencyCache = ref({}); // Cache for currency names
 
 // Setup socket connection
 const socket = io(import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
 
-// Initialize rustplus status
-socket.on('connect', () => {
-  console.log('Socket connected');
-  // Request current status
-  socket.emit('getStatus');
-});
-
-socket.on('disconnect', () => {
-  console.log('Socket disconnected');
-  rustplusStatus.value = { connected: false };
-});
-
-// Listen for connection status updates
-socket.on('rustplusStatus', (status) => {
-  rustplusStatus.value = status;
+// Load data on component mount
+onMounted(async () => {
+  // Load vending machines data
+  await loadVendingMachines();
   
-  // If just connected, refresh data
+  // Set up socket event listeners for real-time updates
+  socket.on('vendingMachinesUpdated', (data) => {
+    console.log('Received vending machines update:', data);
+    loadVendingMachines();
+  });
+  
+  socket.on('rustplusStatusChanged', (status) => {
+    console.log('Rust+ status changed:', status);
+    // Reload data when Rust+ connection status changes
   if (status.connected) {
     loadVendingMachines();
   }
 });
 
-// Save the shop prefix to local storage
-function saveShopPrefix() {
-  localStorage.setItem('shopPrefix', shopPrefix.value);
+  // Set up auto-refresh interval (more frequent for better responsiveness)
+  const refreshInterval = setInterval(() => {
+    console.log('Auto-refreshing vending machines data...');
   loadVendingMachines();
-}
+  }, 30000); // Refresh every 30 seconds instead of 60
+  
+  // Clean up interval and socket listeners on component unmount
+  onBeforeUnmount(() => {
+    clearInterval(refreshInterval);
+    socket.off('vendingMachinesUpdated');
+    socket.off('rustplusStatusChanged');
+  });
+});
 
-// Manually refresh vendor data from the server
-async function refreshVendorData() {
+// Refresh all data (map + vending machines)
+async function refreshAllData() {
   try {
-    isRefreshing.value = true;
-    errorMessage.value = '';
+    isLoading.value = true;
+    console.log('Refreshing all data...');
     
-    // Call the server's refresh endpoint
-    const response = await fetch('/api/rustplus/refresh-markers', {
+    // First, trigger a map data refresh from Rust+
+    try {
+      console.log('Requesting map data refresh from Rust+ API...');
+      const mapResponse = await fetch('/api/rustplus/refresh-markers', {
       method: 'POST'
     });
-    
-    if (response.ok) {
-      const result = await response.json();
-      if (result.success) {
-        console.log('Vendor data refreshed successfully');
-        // Wait a moment for the data to update, then reload
-        setTimeout(() => {
-          loadVendingMachines();
-        }, 1000);
+      const mapResult = await mapResponse.json();
+      
+      if (mapResult.success) {
+        console.log('Map data refresh triggered successfully at', new Date().toLocaleTimeString());
+        console.log('Refresh response:', mapResult);
       } else {
-        console.error('Failed to refresh vendor data:', result.error);
-        errorMessage.value = `Failed to refresh: ${result.error}`;
+        console.warn('Map data refresh failed:', mapResult.error);
       }
-    } else {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    } catch (error) {
+      console.warn('Error triggering map refresh:', error);
     }
+    
+    // Wait a moment for map data to update, then refresh vending machines
+    console.log('Waiting for map data to update...');
+    await new Promise(resolve => setTimeout(resolve, 3000)); // Increased wait time
+    
+    // Now refresh vending machine data
+    console.log('Loading vending machines data after map refresh...');
+    await loadVendingMachines();
+    
   } catch (error) {
-    console.error('Error refreshing vendor data:', error);
-    errorMessage.value = `Refresh failed: ${error.message}`;
+    console.error('Error refreshing all data:', error);
   } finally {
-    isRefreshing.value = false;
+    isLoading.value = false;
   }
 }
 
 // Load all vending machines from the server
 async function loadVendingMachines() {
   try {
-    console.log('Loading vending machines...', new Date().toLocaleTimeString());
+    // Only set loading if not already loading (to avoid conflicts with refreshAllData)
+    if (!isLoading.value) {
     isLoading.value = true;
-    errorMessage.value = '';
+    }
     
-    const response = await fetch(`/api/rustplus/vendingMachines?prefix=${encodeURIComponent(shopPrefix.value)}`);
+    // Get shop prefix from localStorage
+    const shopPrefix = localStorage.getItem('shopPrefix');
+    
+    if (!shopPrefix) {
+      console.log('No shop prefix configured');
+      isLoading.value = false;
+      return;
+    }
+    
+    const response = await fetch(`/api/rustplus/vendingMachines?prefix=${encodeURIComponent(shopPrefix)}`);
     const result = await response.json();
-
-    console.log(result.data);
     
     if (result.success) {
-      // The server now provides pre-structured data
+      // The server provides pre-structured data
       const { allyShops: allyShopsData, enemyShops: enemyShopsData, undercutListings } = result.data;
+      
+      // Debug the data structure
+      console.log('Raw server response:', result.data);
+      console.log('Ally shops structure:', allyShopsData);
+      console.log('Enemy shops structure:', enemyShopsData);
+      
+      // Debug specific shop data
+      const aSho2 = enemyShopsData.find(shop => shop.shopName && shop.shopName.includes('A Sho 2'));
+      if (aSho2) {
+        console.log('A Sho 2 shop data:', aSho2);
+        if (aSho2.shopContents) {
+          console.log('A Sho 2 shop contents:', aSho2.shopContents);
+          // Log each item in shopContents with full details
+          aSho2.shopContents.forEach((item, index) => {
+            console.log(`A Sho 2 item ${index} at ${new Date().toLocaleTimeString()}:`, {
+              itemId: item.itemId,
+              quantity: item.quantity,
+              costPerItem: item.costPerItem,
+              currencyId: item.currencyId,
+              fullItem: item
+            });
+          });
+        }
+      } else {
+        console.log('A Sho 2 not found in enemy shops data');
+      }
       
       // Store shops for reference
       myShops.value = allyShopsData;
       competitorShops.value = enemyShopsData;
       
-      // Use undercutListings directly since they're in the right format
-      undercutItems.value = undercutListings;
+      // Process undercut listings to include all competitors for each undercut item
+      undercutItems.value = [];
       
-      // Reset retry count on success
-      retryCount.value = 0;
-    } else {
-      console.error('Failed to load vending machines:', result.error);
-      
-      // Handle specific error cases
-      if (result.error.includes('Not connected')) {
-        errorMessage.value = 'Rust+ not connected. Please wait for connection to establish.';
-        console.log('Rust+ not connected, waiting for connection...');
-      } else if (result.error.includes('No map markers')) {
-        errorMessage.value = 'No map markers available yet. Please wait for data to load.';
-        console.log('No map markers available, waiting for data...');
+      for (const undercut of undercutListings) {
+        // Find all competitors selling the same item+currency combo
+        const allCompetitors = [];
         
-        // Show additional details if available
-        if (result.details) {
-          console.log('Service readiness details:', result.details);
-          if (result.details.suggestion) {
-            errorMessage.value += ` ${result.details.suggestion}`;
+        enemyShopsData.forEach(enemyShop => {
+          if (enemyShop.shopContents && Array.isArray(enemyShop.shopContents)) {
+            enemyShop.shopContents.forEach(enemyItem => {
+              if (enemyItem.itemId === undercut.itemId && enemyItem.currencyId === undercut.allyShop.currencyId) {
+                // Only consider competitors that have meaningful stock (amountInStock > 1)
+                // Use amountInStock instead of quantity - quantity is per transaction, amountInStock is actual stock
+                const enemyStock = enemyItem.amountInStock || 0;
+                const hasMeaningfulStock = enemyStock > 1;
+                console.log(`Checking competitor ${enemyShop.shopName} for item ${enemyItem.itemId}:`, {
+                  quantity: enemyItem.quantity,
+                  amountInStock: enemyStock,
+                  costPerItem: enemyItem.costPerItem,
+                  hasStock: hasMeaningfulStock,
+                  reason: enemyStock <= 1 ? 'Low stock (≤1)' : 'Sufficient stock'
+                });
+                
+                if (hasMeaningfulStock) {
+                  // Calculate if this competitor is actually undercutting
+                  const yourPricePerUnit = undercut.allyShop.price / undercut.allyShop.quantity;
+                  const enemyPricePerUnit = enemyItem.costPerItem / enemyItem.quantity;
+                  const isUndercutting = enemyPricePerUnit < yourPricePerUnit;
+                  
+                  allCompetitors.push({
+                    ...enemyShop,
+                    price: enemyItem.costPerItem,
+                    quantity: enemyItem.quantity,
+                    currencyId: enemyItem.currencyId,
+                    isUndercutting: isUndercutting,
+                    pricePerUnit: enemyPricePerUnit
+                  });
+                    } else {
+                  console.log(`Excluding ${enemyShop.shopName} - insufficient stock (amountInStock: ${enemyStock})`);
+                }
+              }
+            });
+          }
+        });
+        
+        // Sort competitors by cheapest price per unit (lowest price first)
+        allCompetitors.sort((a, b) => {
+          // Handle N/A values by putting them at the end
+          if (a.pricePerUnit === undefined && b.pricePerUnit === undefined) return 0;
+          if (a.pricePerUnit === undefined) return 1;
+          if (b.pricePerUnit === undefined) return -1;
+          
+          // Sort by price per unit ascending (cheapest first)
+          return a.pricePerUnit - b.pricePerUnit;
+        });
+        
+        // Create the undercut item with all competitors
+        const undercutItem = {
+          ...undercut,
+          enemyShops: allCompetitors
+        };
+        
+        undercutItems.value.push(undercutItem);
+      }
+      
+      // Debug: Log undercut items to see why they're being flagged
+      console.log('Undercut items from server:', undercutListings);
+      undercutListings.forEach(item => {
+        console.log(`Item ${item.itemName} flagged as undercut:`, {
+          yourPrice: item.allyShop.price,
+          yourQuantity: item.allyShop.quantity,
+          yourPricePerUnit: item.allyShop.price / item.allyShop.quantity,
+          enemyShops: item.enemyShops.map(e => ({
+            shopName: e.shopName,
+            price: e.price,
+            quantity: e.quantity,
+            pricePerUnit: e.price / e.quantity
+          }))
+        });
+      });
+      
+      // Cache currency names for undercut items
+      for (const undercut of undercutListings) {
+        if (undercut.allyShop && undercut.allyShop.currencyId && !currencyCache.value[undercut.allyShop.currencyId]) {
+          try {
+            const currencyDetails = await itemDatabaseService.getItemById(undercut.allyShop.currencyId);
+            if (currencyDetails) {
+              currencyCache.value[undercut.allyShop.currencyId] = currencyDetails.name;
+            }
+          } catch (error) {
+            console.log('Could not get currency details for undercut item ID:', undercut.allyShop.currencyId);
           }
         }
-        
-        // Try to refresh markers if we have connection
-        if (rustplusStatus.value.connected && retryCount.value < maxRetries) {
-          retryCount.value++;
-          console.log(`Retrying in 5 seconds... (${retryCount.value}/${maxRetries})`);
-          setTimeout(() => {
-            if (rustplusStatus.value.connected) {
-              loadVendingMachines();
-            }
-          }, 5000);
-        }
-      } else {
-        errorMessage.value = `Error: ${result.error}`;
       }
+      
+      // Create allItems by combining ally shops with their enemy shops
+      allItems.value = [];
+      
+      // Process each ally shop and its contents
+      for (const allyShop of allyShopsData) {
+        // Each shop can have multiple items in shopContents
+        for (const shopItem of allyShop.shopContents) {
+          // Find enemy shops that sell the same item
+          let itemEnemyShops = [];
+          
+          // Check if enemy shops have shopContents structure
+          if (enemyShopsData && enemyShopsData.length > 0) {
+            enemyShopsData.forEach(enemyShop => {
+              // If enemy shop has shopContents, check each item
+              if (enemyShop.shopContents && Array.isArray(enemyShop.shopContents)) {
+                enemyShop.shopContents.forEach(enemyItem => {
+                  // Only match if both item AND currency are the same
+                  if (enemyItem.itemId === shopItem.itemId && enemyItem.currencyId === shopItem.currencyId) {
+                    // Only consider competitors that have meaningful stock (amountInStock > 1)
+                    const enemyStock = enemyItem.amountInStock || 0;
+                    const hasMeaningfulStock = enemyStock > 1;
+                    console.log(`All Items - Checking competitor ${enemyShop.shopName} for item ${enemyItem.itemId}:`, {
+                      quantity: enemyItem.quantity,
+                      amountInStock: enemyStock,
+                      costPerItem: enemyItem.costPerItem,
+                      hasStock: hasMeaningfulStock,
+                      reason: enemyStock <= 1 ? 'Low stock (≤1)' : 'Sufficient stock'
+                    });
+                    
+                    if (hasMeaningfulStock) {
+                      // Calculate if this competitor is actually undercutting
+                      const yourPricePerUnit = shopItem.costPerItem / (shopItem.quantity || 1);
+                      const enemyPricePerUnit = enemyItem.costPerItem / enemyItem.quantity;
+                      const isUndercutting = enemyPricePerUnit < yourPricePerUnit;
+                      
+                      itemEnemyShops.push({
+                        ...enemyShop,
+                        price: enemyItem.costPerItem,
+                        quantity: enemyItem.quantity,
+                        currencyId: enemyItem.currencyId,
+                        isUndercutting: isUndercutting,
+                        pricePerUnit: enemyPricePerUnit
+                      });
+                    } else {
+                      console.log(`All Items - Excluding ${enemyShop.shopName} - insufficient stock (amountInStock: ${enemyStock})`);
+                    }
+                  }
+                });
+              } else if (enemyShop.itemId === shopItem.itemId && enemyShop.currencyId === shopItem.currencyId) {
+                // Direct itemId match (old structure) - also check currency
+                const enemyStock = enemyShop.amountInStock || 0;
+                const hasMeaningfulStock = enemyStock > 1;
+                console.log(`All Items (Old Structure) - Checking competitor ${enemyShop.shopName} for item ${enemyShop.itemId}:`, {
+                  quantity: enemyShop.quantity,
+                  amountInStock: enemyStock,
+                  price: enemyShop.price,
+                  hasStock: hasMeaningfulStock,
+                  reason: enemyStock <= 1 ? 'Low stock (≤1)' : 'Sufficient stock'
+                });
+                
+                if (hasMeaningfulStock) {
+                  const yourPricePerUnit = shopItem.costPerItem / (shopItem.quantity || 1);
+                  const enemyPricePerUnit = enemyShop.price / enemyShop.quantity;
+                  const isUndercutting = enemyPricePerUnit < yourPricePerUnit;
+                  
+                  itemEnemyShops.push({
+                    ...enemyShop,
+                    isUndercutting: isUndercutting,
+                    pricePerUnit: enemyPricePerUnit
+                  });
+                } else {
+                  console.log(`All Items (Old Structure) - Excluding ${enemyShop.shopName} - insufficient stock (amountInStock: ${enemyStock})`);
+                }
+              }
+            });
+          }
+          
+          // Debug competitor matching
+          console.log(`Looking for competitors for item ${shopItem.itemId} with currency ${shopItem.currencyId}:`);
+          console.log('Your item details:', {
+            itemId: shopItem.itemId,
+            currencyId: shopItem.currencyId,
+            price: shopItem.costPerItem,
+            quantity: shopItem.quantity
+          });
+          console.log('Available enemy shops:', enemyShopsData.map(e => ({ 
+            shopName: e.shopName, 
+            hasShopContents: !!e.shopContents,
+            itemCount: e.shopContents ? e.shopContents.length : 0
+          })));
+          console.log('Matched competitors (same item + currency):', itemEnemyShops);
+          if (itemEnemyShops.length > 0) {
+            console.log('Competitor details:', itemEnemyShops.map(c => ({
+              shopName: c.shopName,
+              price: c.price,
+              quantity: c.quantity,
+              currencyId: c.currencyId
+            })));
+            
+            // Sort competitors by cheapest price per unit (lowest price first)
+            itemEnemyShops.sort((a, b) => {
+              // Handle N/A values by putting them at the end
+              if (a.pricePerUnit === undefined && b.pricePerUnit === undefined) return 0;
+              if (a.pricePerUnit === undefined) return 1;
+              if (b.pricePerUnit === undefined) return -1;
+              
+              // Sort by price per unit ascending (cheapest first)
+              return a.pricePerUnit - b.pricePerUnit;
+            });
+            
+            console.log('Competitors sorted by best value:', itemEnemyShops.map(c => ({
+              shopName: c.shopName,
+              price: c.price,
+              quantity: c.quantity,
+              ratio: calculateRatio(c.price, c.quantity)
+            })));
+          }
+          
+          // Get item details from the database
+          let itemDetails = null;
+          try {
+            itemDetails = await itemDatabaseService.getItemById(shopItem.itemId);
+          } catch (error) {
+            console.log('Could not get item details for ID:', shopItem.itemId);
+          }
+          
+          // Cache currency name for this item
+          if (shopItem.currencyId && !currencyCache.value[shopItem.currencyId]) {
+            try {
+              const currencyDetails = await itemDatabaseService.getItemById(shopItem.currencyId);
+              if (currencyDetails) {
+                currencyCache.value[shopItem.currencyId] = currencyDetails.name;
+              }
+            } catch (error) {
+              console.log('Could not get currency details for ID:', shopItem.currencyId);
+            }
+          }
+          
+          // Debug logging to see what data we have
+          console.log('Processing shopItem:', shopItem);
+          console.log('Item ID:', shopItem.itemId);
+          console.log('Quantity:', shopItem.quantity);
+          console.log('Cost per item:', shopItem.costPerItem);
+          console.log('Item details from DB:', itemDetails);
+          
+          // Check if this item is being undercut (at least one competitor is undercutting)
+          const isBeingUndercut = itemEnemyShops.some(enemy => enemy.isUndercutting);
+          
+          // Only add to "All Your Items" if it's NOT being undercut
+          if (!isBeingUndercut) {
+            // Create item object with proper structure
+            const item = {
+              itemId: shopItem.itemId,
+              itemName: itemDetails ? itemDetails.name : `Item ${shopItem.itemId}`,
+              itemImage: itemDetails ? `/api/items/${shopItem.itemId}/image` : null,
+              allyShop: {
+                ...allyShop,
+                price: shopItem.costPerItem,
+                quantity: shopItem.quantity,
+                currencyId: shopItem.currencyId
+              },
+              enemyShops: itemEnemyShops
+            };
+            
+            allItems.value.push(item);
+          } else {
+            console.log(`Item ${shopItem.itemId} from shop ${allyShop.shopName} is being undercut - excluding from "All Your Items"`);
+          }
+        }
+      }
+      
+      // Update last updated timestamp
+      lastUpdated.value = new Date();
+      console.log('Vending machines data loaded successfully at:', lastUpdated.value);
+      
+    } else {
+      console.error('Failed to load vending machines:', result.error);
     }
   } catch (error) {
     console.error('Error loading vending machines:', error);
-    if (error.message.includes('Failed to fetch')) {
-      errorMessage.value = 'Network error. Server might be unavailable.';
-      console.log('Network error, server might be unavailable');
-    } else {
-      errorMessage.value = `Error: ${error.message}`;
-    }
   } finally {
+    // Only reset loading if this function set it (not called from refreshAllData)
+    if (isLoading.value) {
     isLoading.value = false;
   }
 }
-// Load data on component mount
-onMounted(async () => {
-  // Initial data load
-  if (shopPrefix.value) {
-    await loadVendingMachines();
-  }
-  
-  // Set up auto-refresh interval
-  const refreshInterval = setInterval(() => {
-    if (rustplusStatus.value.connected && shopPrefix.value) {
-      console.log('Auto-refreshing vendor data...');
-      loadVendingMachines();
-    }
-  }, 60000); // Refresh every minute
-  
-  // Clean up interval on component unmount
-  onBeforeUnmount(() => {
-    clearInterval(refreshInterval);
-  });
-});
+}
 
 // Handle image loading errors
 function handleImageError(event) {
@@ -360,23 +631,419 @@ function handleImageError(event) {
   }
 }
 
+// Helper function to get item image with fallback
+function getItemImage(item) {
+  // Try to get image from the item itself first
+  if (item.itemImage && item.itemImage !== '') {
+    return item.itemImage;
+  }
+  
+  // Try to get image from allyShop if available
+  if (item.allyShop && item.allyShop.itemImage && item.allyShop.itemImage !== '') {
+    return item.allyShop.itemImage;
+  }
+  
+  // Return null if no image found
+  return null;
+}
+
+// Helper function to get currency image
+function getCurrencyImage(currencyId) {
+  if (currencyId) {
+    return `/api/items/${currencyId}/image`;
+  }
+  return null;
+}
+
+// Helper function to get currency name (async)
+async function getCurrencyName(currencyId) {
+  if (!currencyId) return 'Unknown Currency';
+  
+  try {
+    const currencyDetails = await itemDatabaseService.getItemById(currencyId);
+    return currencyDetails ? currencyDetails.name : `Item ${currencyId}`;
+  } catch (error) {
+    console.log('Could not get currency details for ID:', currencyId);
+    return `Item ${currencyId}`;
+  }
+}
+
+// Helper function to get currency name (sync - uses cache)
+function getCurrencyNameSync(currencyId) {
+  if (!currencyId) return 'Unknown Currency';
+  
+  // Return cached name if available
+  if (currencyCache.value[currencyId]) {
+    return currencyCache.value[currencyId];
+  }
+  
+  // Return fallback if not cached yet
+  return `Item ${currencyId}`;
+}
+
 // Helper function to calculate trade ratio
 function calculateRatio(price, quantity) {
-  if (!quantity || quantity === 0) return '?';
-  // Return ratio showing items per currency unit (e.g., 100 wood for 1000 metal = 0.1 wood per metal)
-  // For display, show as "0.10:1" meaning 0.10 wood per 1 metal frag
-  const ratio = quantity / price;
+  // Check if both price and quantity are valid numbers
+  if (!price || !quantity || isNaN(price) || isNaN(quantity) || price <= 0 || quantity <= 0) {
+    return 'N/A';
+  }
+  
+  // Return ratio showing currency units per item (1:XXX format)
+  const ratio = price / quantity;
+  if (isNaN(ratio) || !isFinite(ratio)) {
+    return 'N/A';
+  }
   return ratio.toFixed(2);
 }
 
-// Helper function to get quantity from order
-function getQuantityFromOrder(order) {
-  return order?.quantity || 1;
+// Helper function to get the price needed to beat competitors
+function getCompetitivePrice(listing) {
+  if (!listing.enemyShops || listing.enemyShops.length === 0) return 0;
+  
+  // Calculate what price we need to offer a better ratio than all competitors
+  const yourQuantity = listing.allyShop.quantity;
+  const yourCurrentPrice = listing.allyShop.price;
+  const yourCurrentRatio = yourQuantity / yourCurrentPrice;
+  
+  let bestCompetitorRatio = 0;
+  
+  // Find the best ratio among competitors
+  listing.enemyShops.forEach(enemy => {
+    const enemyRatio = (enemy.quantity || 1) / enemy.price;
+    if (enemyRatio > bestCompetitorRatio) {
+      bestCompetitorRatio = enemyRatio;
+    }
+  });
+  
+  // Calculate the price we need to beat the best competitor ratio
+  // We want: yourQuantity / newPrice > bestCompetitorRatio
+  // So: newPrice < yourQuantity / bestCompetitorRatio
+  const competitivePrice = Math.floor(yourQuantity / bestCompetitorRatio);
+  
+  // Make sure we're actually undercutting (price should be lower than current)
+  return Math.min(competitivePrice, yourCurrentPrice - 1);
 }
 
-// Helper function to get the lowest competitor price
-function getLowestEnemyPrice(listing) {
-  if (!listing.enemyShops || listing.enemyShops.length === 0) return 0;
-  return Math.min(...listing.enemyShops.map(e => e.price));
+// Helper function to format time for display
+function formatTime(date) {
+  if (!date) return '';
+  return date.toLocaleTimeString();
 }
 </script>
+
+<style scoped>
+.undercutter-container {
+  padding: 16px;
+  padding-bottom: 80px; /* Space for sticky status bar */
+  max-width: 1400px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.header-controls {
+  background-color: #1A1D20;
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid #2C3034;
+}
+
+.page-title {
+  color: #B1ADB3;
+  font-size: 1.5rem;
+  font-weight: bold;
+  margin: 0;
+}
+
+.refresh-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.refresh-btn {
+  background-color: #A673B1 !important;
+  color: white !important;
+}
+
+.last-updated {
+  color: #9D7D99;
+  font-size: 0.9rem;
+}
+
+.section-container {
+  margin-top: 24px;
+}
+
+.section-title {
+  margin-bottom: 10px;
+  font-size: 1.3rem;
+  text-align: center;
+  color: #B1ADB3;
+  font-weight: bold;
+}
+
+.section-description {
+  margin-bottom: 20px;
+  text-align: center;
+  color: #9D7D99;
+  font-size: 0.9rem;
+}
+
+.comparison-card {
+  background-color: #1F2225;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid #2C3034;
+  max-width: 100%;
+}
+
+.undercut-card {
+  background-color: #2C3034;
+  border: 1px solid #A673B1;
+}
+
+.all-items-card {
+  background-color: #1A1D20;
+  border: 1px solid #2C3034;
+}
+
+.item-header {
+  margin-bottom: 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2C3034;
+  text-align: center;
+}
+
+.item-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.item-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.item-name {
+  font-size: 1.1rem;
+  font-weight: 500;
+  color: #B1ADB3;
+}
+
+.comparison-table {
+  margin-bottom: 16px;
+}
+
+.table-header {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 1.5fr 1fr;
+  gap: 12px;
+  padding: 8px 12px;
+  background-color: #231E29;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #B1ADB3;
+  font-size: 0.9rem;
+}
+
+.header-cell {
+  text-align: center;
+}
+
+.table-row {
+  display: grid;
+  grid-template-columns: 2fr 1.5fr 1.5fr 1fr;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  align-items: center;
+}
+
+.your-price {
+  background-color: #2C3034;
+  border: 1px solid #A673B1;
+}
+
+.competitor-price {
+  background-color: #1A1D20;
+  border: 1px solid #2C3034;
+}
+
+.competitor-price.not-undercutting {
+  background-color: #151719;
+  border: 1px solid #1A1D20;
+  opacity: 0.6;
+}
+
+.competitor-price.not-undercutting .cell {
+  color: #6B7280;
+}
+
+.no-competitors-row {
+  color: #9D7D99;
+  font-style: italic;
+}
+
+.cell {
+  display: flex;
+  align-items: center;
+}
+
+.shop-name {
+  font-weight: 400;
+  color: #B1ADB3;
+  font-size: 0.9rem;
+}
+
+.sell-display, .for-display {
+  justify-content: center;
+}
+
+.trade-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.item-stack, .currency-stack {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  background-color: #151719;
+  padding: 3px 6px;
+  border-radius: 3px;
+}
+
+.stack-icon {
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+
+.stack-amount {
+  font-weight: 500;
+  color: #B1ADB3;
+  font-size: 0.8rem;
+}
+
+.arrow-icon {
+  color: #9D7D99;
+  font-size: 18px;
+}
+
+.ratio {
+  justify-content: center;
+  font-weight: 600;
+  color: #A673B1;
+  font-size: 1rem;
+}
+
+.recommendation {
+  text-align: center;
+  padding: 12px;
+  background-color: #151719;
+  border-radius: 4px;
+  border: 1px solid #2C3034;
+}
+
+.recommendation-text {
+  color: #B1ADB3;
+  font-size: 0.9rem;
+  font-weight: 400;
+}
+
+.success-box, .info-box {
+  margin-bottom: 16px;
+  background-color: #1A1D20;
+  padding: 16px;
+  border-radius: 8px;
+  grid-column: 1 / -1; /* Span both columns */
+}
+
+/* Responsive: stack on mobile */
+@media (max-width: 1200px) {
+  .undercutter-container {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  
+  .comparison-card {
+    max-width: 700px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .table-header, .table-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  
+  .header-cell, .cell {
+    text-align: center;
+    justify-content: center;
+  }
+  
+  .trade-display {
+    flex-direction: column;
+    gap: 8px;
+  }
+  
+  .comparison-card {
+    margin: 0 8px 16px 8px;
+  }
+}
+
+/* Sticky Status Bar */
+.sticky-status-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background-color: #1A1D20;
+  border-top: 1px solid #2C3034;
+  padding: 12px 16px;
+  z-index: 1000;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.status-content {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.status-left {
+  display: flex;
+  align-items: center;
+}
+
+.status-right {
+  display: flex;
+  align-items: center;
+}
+
+.last-updated {
+  color: #9D7D99;
+  font-size: 0.9rem;
+}
+
+.no-data {
+  color: #666;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+</style>

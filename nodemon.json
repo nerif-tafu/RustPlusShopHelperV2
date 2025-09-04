@@ -1,15 +1,15 @@
 {
     "ignore": [
-    "server/RPData.json", 
-    "server/data/**", 
-    "server/data/images/**/*",
-    "server/data/*.json",
-    "server/data/itemDatabase.json",
-    "server/data/cookies.json",
-    "vite.config.mjs*", 
-    "*.mjs", 
-    "node_modules/", 
-    "dist/", 
-route    ".vite/"
+        "server/RPData.json", 
+        "server/data/**", 
+        "server/data/images/**/*",
+        "server/data/*.json",
+        "server/data/itemDatabase.json",
+        "server/data/cookies.json",
+        "vite.config.mjs*", 
+        "*.mjs", 
+        "node_modules/", 
+        "dist/", 
+        ".vite/"
     ]
 }
