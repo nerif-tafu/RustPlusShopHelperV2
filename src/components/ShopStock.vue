@@ -15,9 +15,8 @@
           <div class="item-header">
             <div class="item-info">
               <v-icon class="item-icon">mdi-store</v-icon>
-              <span class="item-name">{{ shop.shopName }}</span>
+              <span class="item-name shop-name" @click="showMapModal(shop)">{{ shop.shopName }}</span>
             </div>
-            <div class="shop-location">Grid: {{ shop.x.toFixed(0) }}, {{ shop.y.toFixed(0) }}</div>
           </div>
           
           <div v-if="shop.shopContents && shop.shopContents.length > 0" class="comparison-table">
@@ -73,6 +72,67 @@
       </div>
     </div>
 
+    <!-- Map Modal -->
+    <v-dialog v-model="mapModalVisible" max-width="800px">
+      <v-card class="map-modal">
+        <v-card-title class="map-modal-title">
+          <span>Map View</span>
+          <v-btn icon @click="mapModalVisible = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-card-title>
+        
+        <v-card-text class="map-modal-content">
+          <div v-if="isLoadingMap" class="map-loading">
+            <v-progress-circular indeterminate color="primary"></v-progress-circular>
+            <span>Loading map...</span>
+          </div>
+          
+          <div v-else-if="mapData" class="map-container">
+            <div v-if="mapData.image" class="map-image-wrapper">
+              <!-- Shop location info -->
+              <div v-if="selectedShop" class="shop-location-info">
+                <strong>{{ selectedShop.shopName }}</strong> - Grid: {{ selectedShop.x.toFixed(0) }}, {{ selectedShop.y.toFixed(0) }}
+              </div>
+              
+              <img :src="mapData.image" alt="Rust Map" class="map-image" />
+              
+              <!-- Shop marker -->
+              <div v-if="selectedShop" class="shop-marker" :style="getMarkerPosition(selectedShop)">
+                <v-icon color="red" size="24">mdi-map-marker</v-icon>
+                <span class="marker-label">{{ selectedShop.shopName }}</span>
+              </div>
+              
+              <!-- Simple fallback marker (red dot) -->
+              <div v-if="selectedShop" class="fallback-marker" :style="getMarkerPosition(selectedShop)">
+                <div class="marker-dot"></div>
+              </div>
+              
+              <!-- Position indicator dot -->
+              <div v-if="selectedShop" class="position-dot" :style="getMarkerPosition(selectedShop)">
+                <div class="dot"></div>
+              </div>
+              
+              <!-- Debug info -->
+              <div v-if="selectedShop" class="debug-info">
+                <p>Marker should be at: {{ getMarkerPosition(selectedShop) }}</p>
+                <p>Shop coords: {{ selectedShop.x }}, {{ selectedShop.y }}</p>
+              </div>
+            </div>
+            <div v-else class="map-data-info">
+              <p>Map data received but no image found.</p>
+              <p>Map data structure: {{ JSON.stringify(mapData, null, 2) }}</p>
+            </div>
+          </div>
+          
+          <div v-else class="map-error">
+            <v-icon color="error" size="48">mdi-map-marker-off</v-icon>
+            <span>Failed to load map data</span>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <!-- Sticky Status Bar -->
     <div class="sticky-status-bar">
       <div class="status-content">
@@ -109,6 +169,12 @@ const isLoading = ref(false);
 const lastUpdated = ref(null);
 const currencyCache = ref({});
 const itemCache = ref({});
+
+// Map modal state
+const mapModalVisible = ref(false);
+const isLoadingMap = ref(false);
+const mapData = ref(null);
+const selectedShop = ref(null);
 
 // Load shop data on component mount
 onMounted(async () => {
@@ -149,6 +215,80 @@ const loadShopData = async () => {
   } finally {
     isLoading.value = false;
   }
+};
+
+// Show map modal and load map data
+const showMapModal = async (shop) => {
+  selectedShop.value = shop;
+  mapModalVisible.value = true;
+  await loadMapData();
+};
+
+// Load map data from the Rust+ API
+const loadMapData = async () => {
+  try {
+    isLoadingMap.value = true;
+    mapData.value = null;
+    
+    console.log('Fetching map data...');
+    const response = await fetch('/api/rustplus/map');
+    
+    console.log('Map response status:', response.status);
+    
+    const result = await response.json();
+    console.log('Map response received:', result);
+    
+    if (result.success) {
+      mapData.value = result.data;
+      console.log('Map data set:', mapData.value);
+    } else {
+      console.error('Failed to load map:', result.error);
+      if (result.details) {
+        console.log('Connection details:', result.details);
+      }
+    }
+  } catch (error) {
+    console.error('Error loading map:', error);
+  } finally {
+    isLoadingMap.value = false;
+  }
+};
+
+// Calculate marker position on the map
+const getMarkerPosition = (shop) => {
+  if (!mapData.value || !shop) {
+    console.log('Cannot calculate marker position:', { mapData: mapData.value, shop });
+    return {};
+  }
+  
+  // Get actual map dimensions from the API response
+  const mapWidth = mapData.value.width || 4096;
+  const mapHeight = mapData.value.height || 4096;
+  
+  // Modal map display size (this should match the CSS max-width)
+  const modalWidth = 800;
+  const modalHeight = 600; // Approximate height for the modal
+  
+  // Convert Rust grid coordinates to pixel position on the modal map
+  // Rust coordinates are typically 0-4096, but we use the actual dimensions from the API
+  const x = (shop.x / mapWidth) * modalWidth;
+  const y = (shop.y / mapHeight) * modalHeight;
+  
+  console.log('Marker positioning:', {
+    shop: shop.shopName,
+    shopCoords: { x: shop.x, y: shop.y },
+    mapDimensions: { width: mapWidth, height: mapHeight },
+    modalDimensions: { width: modalWidth, height: modalHeight },
+    calculatedPosition: { x: Math.round(x), y: Math.round(y) }
+  });
+  
+  return {
+    position: 'absolute',
+    left: `${x}px`,
+    top: `${y}px`,
+    transform: 'translate(-50%, -100%)', // Center the marker horizontally, anchor to bottom
+    zIndex: 1000
+  };
 };
 
 // Cache item and currency names for better performance
@@ -313,13 +453,16 @@ const getSortedShopContents = (shopContents) => {
   color: #B1ADB3;
 }
 
-.shop-location {
-  color: #9D7D99;
-  font-size: 0.9rem;
-  background-color: #2C3034;
-  padding: 4px 8px;
-  border-radius: 4px;
+.shop-name {
+  cursor: pointer;
+  transition: color 0.2s ease;
 }
+
+.shop-name:hover {
+  color: #A673B1; /* Highlight color on hover */
+}
+
+
 
 .comparison-table {
   margin-bottom: 16px;
@@ -517,6 +660,181 @@ const getSortedShopContents = (shopContents) => {
   .item-name-cell {
     justify-content: flex-start;
   }
+}
+
+/* Map Modal Styles */
+.map-modal {
+  background-color: #1A1D20;
+  border: 1px solid #2C3034;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.map-modal-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background-color: #231E29;
+  border-bottom: 1px solid #2C3034;
+  color: #B1ADB3;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.map-modal-content {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.map-loading, .map-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #9D7D99;
+  font-size: 0.9rem;
+}
+
+.map-container {
+  position: relative;
+  width: 100%;
+}
+
+.map-image-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.map-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.map-data-info {
+  padding: 16px;
+  background-color: #2C3034;
+  border-radius: 4px;
+  color: #B1ADB3;
+  font-family: monospace;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.shop-marker {
+  position: absolute;
+  background-color: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  border: 2px solid red;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.marker-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100px;
+}
+
+.debug-info {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  background-color: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  z-index: 1001;
+  max-width: 200px;
+}
+
+.shop-location-info {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background-color: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  z-index: 10;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.test-marker {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  border: 2px solid blue;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.test-dot {
+  width: 10px;
+  height: 10px;
+  background-color: blue;
+  border-radius: 50%;
+}
+
+.fallback-marker {
+  position: absolute;
+  z-index: 999;
+  pointer-events: none;
+}
+
+.marker-dot {
+  width: 20px;
+  height: 20px;
+  background-color: red;
+  border-radius: 50%;
+  border: 3px solid white;
+  box-shadow: 0 0 10px rgba(255, 0, 0, 0.8);
+}
+
+.position-dot {
+  position: absolute;
+  z-index: 998;
+  pointer-events: none;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  background-color: yellow;
+  border-radius: 50%;
+  border: 2px solid black;
+  box-shadow: 0 0 5px rgba(255, 255, 0, 0.8);
 }
 </style>
   

@@ -523,6 +523,63 @@ app.get('/api/rustplus/mapMarkers', async (req, res) => {
   }
 });
 
+// Add an endpoint to get the map from the Rust server
+app.get('/api/rustplus/map', async (req, res) => {
+  try {
+    console.log('Map request received');
+    
+    // Check connection status first
+    const status = rustplusService.getStatus();
+    console.log('Rust+ connection status:', status);
+    
+    // Check service readiness
+    const readiness = rustplusService.isReady();
+    console.log('Service readiness:', readiness);
+    
+    if (!readiness.connected) {
+      console.log('Rust+ not connected, returning error');
+      return res.status(400).json({
+        success: false,
+        error: 'Not connected to Rust+ server',
+        details: readiness
+      });
+    }
+    
+    const mapData = await rustplusService.getMap();
+    console.log('Map data received:', mapData);
+    
+    // Extract the image data and convert to base64
+    let processedMapData = null;
+    if (mapData && mapData.map && mapData.map.jpgImage) {
+      const jpgBuffer = mapData.map.jpgImage;
+      const base64Image = jpgBuffer.toString('base64');
+      const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+      
+      processedMapData = {
+        image: dataUrl,
+        width: mapData.map.width,
+        height: mapData.map.height,
+        oceanMargin: mapData.map.oceanMargin,
+        background: mapData.map.background,
+        monuments: mapData.map.monuments
+      };
+      
+      console.log('Processed map data with image URL');
+    } else {
+      console.log('No jpgImage found in map data');
+      processedMapData = mapData;
+    }
+    
+    res.json({
+      success: true,
+      data: processedMapData
+    });
+  } catch (error) {
+    console.error('Failed to get map from Rust server:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Add this endpoint to your server.js file
 app.post('/api/undercutter/calculate', async (req, res) => {
   try {
