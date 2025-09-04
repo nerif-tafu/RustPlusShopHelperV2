@@ -22,6 +22,9 @@ app.use(cors({
 
 app.use(express.json());
 
+// Serve static files from the dist directory (built frontend)
+app.use(express.static(path.join(__dirname, '..', 'dist')));
+
 // Add CORS headers
 app.use((req, res, next) => {
     res.header('Cross-Origin-Opener-Policy', 'unsafe-none');
@@ -747,6 +750,11 @@ app.get('/api/rustplus/vendingMachine/:id', async (req, res) => {
 // Steam login endpoints removed - no longer needed
 
 // Database reset endpoint removed - no longer needed
+
+// Catch-all handler: send back React's index.html file for client-side routing
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'dist', 'index.html'));
+});
 
 // Start server
 server.listen(3001, () => {
