@@ -1,9 +1,5 @@
 <template>
   <div class="shopstock-container">
-    <!-- Header -->
-    <div class="header-controls" style="grid-column: 1 / -1; margin-bottom: 16px;">
-    </div>
-
     <!-- Stock Overview Section -->
     <div class="section-container">
       <h3 class="section-title">Stock Overview</h3>
