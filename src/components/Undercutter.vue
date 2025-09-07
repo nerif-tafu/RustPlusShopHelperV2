@@ -272,11 +272,15 @@ onMounted(async () => {
   }
 });
 
-  // Set up auto-refresh interval (more frequent for better responsiveness)
-  const refreshInterval = setInterval(() => {
-    console.log('Auto-refreshing vending machines data...');
-  loadVendingMachines();
-  }, 30000); // Refresh every 30 seconds instead of 60
+  // Set up auto-refresh interval (same behavior as the manual Refresh Data)
+  const refreshInterval = setInterval(async () => {
+    try {
+      console.log('Auto-refreshing: triggering map refresh then reloading data...');
+      await refreshAllData();
+    } catch (e) {
+      console.warn('Auto-refresh failed:', e);
+    }
+  }, 30000); // Refresh every 30 seconds
   
   // Clean up interval and socket listeners on component unmount
   onBeforeUnmount(() => {
@@ -474,7 +478,13 @@ async function loadVendingMachines() {
         }
       }
       
-      // Create allItems by combining ally shops with their enemy shops
+      // Build a lookup of items currently undercut (from server-calculated list)
+      const undercutKey = (shopId, itemId, currencyId) => `${shopId}::${itemId}::${currencyId}`;
+      const undercutSet = new Set(
+        (undercutListings || []).map(u => undercutKey(u.allyShop?.shopId, u.itemId, u.allyShop?.currencyId || u.allyShop?.currencyId))
+      );
+      
+      // Create allItems by combining ally shops with their enemy shops, excluding those in undercutSet
       allItems.value = [];
       
       // Process each ally shop and its contents
@@ -619,12 +629,11 @@ async function loadVendingMachines() {
           console.log('Cost per item:', shopItem.costPerItem);
           console.log('Item details from DB:', itemDetails);
           
-          // Check if this item is being undercut (at least one competitor is undercutting or matching)
-          const isBeingUndercut = itemEnemyShops.some(enemy => enemy.isUndercutting);
+          // Use server-determined undercuts for consistency
+          const key = undercutKey(allyShop.entid, shopItem.itemId, shopItem.currencyId);
+          const isBeingUndercut = undercutSet.has(key);
           
-          // Only add to "All Your Items" if it's NOT being undercut
           if (!isBeingUndercut) {
-            // Create item object with proper structure
             const item = {
               itemId: shopItem.itemId,
               itemName: itemDetails ? itemDetails.name : `Item ${shopItem.itemId}`,
@@ -637,10 +646,7 @@ async function loadVendingMachines() {
               },
               enemyShops: itemEnemyShops
             };
-            
             allItems.value.push(item);
-          } else {
-            console.log(`Item ${shopItem.itemId} from shop ${allyShop.shopName} is being undercut - excluding from "All Your Items"`);
           }
         }
       }
