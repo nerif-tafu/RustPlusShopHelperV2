@@ -1,6 +1,6 @@
 {
   "name": "rustplusshophelpverv2",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "scripts": {
     "devclient": "cross-env NODE_OPTIONS='--no-warnings' vite",
     "devserver": "nodemon ./server/server.js",
