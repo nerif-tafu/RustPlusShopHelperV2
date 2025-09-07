@@ -1,0 +1,21 @@
+{
+  "authToken": "eyJzdGVhbUlkIjoiNzY1NjExOTgwNTY0MDk3NzYiLCJ2ZXJzaW9uIjowLCJpc3MiOjE3NTcyNTg3ODgsImV4cCI6MTc1ODQ2ODM4OH0=.lNiVVmW5uwxXUB0efvmed6S4SH9UU/TAhSCNrC5wxnXssGvwdW9JTHCGtedKHCziBQvWRxWB9k6Hqy9/H0utAA==",
+  "fcmCredentials": {
+    "gcm": {
+      "androidId": "5178719081859962196",
+      "securityToken": "294796207823481075"
+    },
+    "fcm": {
+      "token": "fZD5ooQe7DU:APA91bFlHr-5QvvqgejHjE6LCyjP2bo031f9lY-6p_13sMe2u2mjsEDToMIB7nPH8yXNWfcJEdwmAQJpelArk-mvckasSiw3wLjBZ3p88ewWUyEb22ZPgEI"
+    }
+  },
+  "expoPushToken": "ExponentPushToken[aejZ53FTFtli8TI-LwERxs]",
+  "registerData": {
+    "AuthToken": "eyJzdGVhbUlkIjoiNzY1NjExOTgwNTY0MDk3NzYiLCJ2ZXJzaW9uIjowLCJpc3MiOjE3NTcyNTg3ODgsImV4cCI6MTc1ODQ2ODM4OH0=.lNiVVmW5uwxXUB0efvmed6S4SH9UU/TAhSCNrC5wxnXssGvwdW9JTHCGtedKHCziBQvWRxWB9k6Hqy9/H0utAA==",
+    "DeviceId": "rustplus.js",
+    "PushKind": 3,
+    "PushToken": "ExponentPushToken[aejZ53FTFtli8TI-LwERxs]"
+  },
+  "savedAt": "2025-09-07T15:26:43.816Z",
+  "expiresAt": "2025-09-08T15:26:43.816Z"
+}

@@ -191,7 +191,6 @@ app.get('/api/items/:id', (req, res) => {
 app.get('/api/items/:id/image', (req, res) => {
   try {
     const itemId = req.params.id;
-    console.log(`Image request for item ID: ${itemId}`);
     
     // Try to get item by numeric ID first (for Rust+ API compatibility)
     let item = rustAssetManager.getItemByNumericId(itemId);
@@ -398,6 +397,45 @@ app.post('/api/pairing/restart', async (req, res) => {
     } catch (error) {
         console.error('Failed to restart FCM listener:', error);
         res.status(500).json({ success: false, error: 'Failed to restart listener' });
+    }
+});
+
+// Get FCM connection status
+app.get('/api/fcm/status', async (req, res) => {
+    try {
+        const status = pairingService.getFCMStatus();
+        res.json({
+            success: true,
+            data: status
+        });
+    } catch (error) {
+        console.error('Failed to get FCM status:', error);
+        res.status(500).json({ success: false, error: 'Failed to get FCM status' });
+    }
+});
+
+// Get Expo notification status
+app.get('/api/expo/status', async (req, res) => {
+    try {
+        const status = pairingService.getExpoStatus();
+        res.json({
+            success: true,
+            data: status
+        });
+    } catch (error) {
+        console.error('Failed to get Expo status:', error);
+        res.status(500).json({ success: false, error: 'Failed to get Expo status' });
+    }
+});
+
+// Attempt to reconnect using saved authentication
+app.post('/api/auth/reconnect', async (req, res) => {
+    try {
+        const result = await pairingService.attemptReconnection();
+        res.json(result);
+    } catch (error) {
+        console.error('Failed to reconnect:', error);
+        res.status(500).json({ success: false, error: 'Failed to reconnect' });
     }
 });
 
@@ -817,6 +855,15 @@ app.get('*', (req, res) => {
 server.listen(3001, () => {
     console.log('Server running on port 3001');
     console.log('Ready to receive pairing requests...');
+    
+    // Initialize authentication on startup
+    pairingService.initializeAuth()
+      .then(() => {
+        console.log('Authentication initialization completed');
+      })
+      .catch(error => {
+        console.error('Authentication initialization failed:', error);
+      });
     
     // Initialize RustPlus connection if server data exists
     rustplusService.initializeRustPlus()

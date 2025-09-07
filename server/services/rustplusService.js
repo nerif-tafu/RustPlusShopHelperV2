@@ -3,6 +3,7 @@ const path = require('path');
 const RustPlus = require('@liamcottle/rustplus.js');
 const socketInstance = require('../socketInstance');
 const rustAssetManager = require('./RustAssetManager');
+const pairingService = require('./pairingService');
 
 let rustplusInstance = null;
 let connectionStatus = {
@@ -95,6 +96,16 @@ function setupEventListeners() {
     // Emit connection status to clients
     const io = socketInstance.getIO();
     io.emit('rustplusStatus', getStatus());
+    
+    // Attempt automatic reconnection after a delay
+    setTimeout(async () => {
+      console.log('Attempting automatic reconnection...');
+      try {
+        await initializeRustPlus();
+      } catch (error) {
+        console.error('Automatic reconnection failed:', error);
+      }
+    }, 5000); // Wait 5 seconds before attempting reconnection
   });
   
   // Error handling
@@ -781,7 +792,7 @@ function calculateUndercutPrices(allyShops, enemyShops) {
         const allyPricePerUnit = allyItem.costPerItem / (allyItem.quantity || 1);
         const lowestEnemyPricePerUnit = Math.min(...enemyItems.map(item => item.price / (item.quantity || 1)));
         
-        if (lowestEnemyPricePerUnit < allyPricePerUnit) {
+        if (lowestEnemyPricePerUnit <= allyPricePerUnit) {
           // Get item details from the database (safely)
           let itemDetails = null;
           try {
@@ -807,7 +818,7 @@ function calculateUndercutPrices(allyShops, enemyShops) {
               pricePerUnit: allyPricePerUnit,
               currencyImage: `/api/items/${allyItem.currencyId}/image`
             },
-            enemyShops: enemyItems.filter(item => (item.price / (item.quantity || 1)) < allyPricePerUnit).map(item => ({
+            enemyShops: enemyItems.filter(item => (item.price / (item.quantity || 1)) <= allyPricePerUnit).map(item => ({
               ...item,
               pricePerUnit: item.price / (item.quantity || 1),
               currencyImage: `/api/items/${item.currencyId}/image`

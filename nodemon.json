@@ -1,6 +1,7 @@
 {
     "ignore": [
         "server/RPData.json", 
+        "server/authData.json",
         "server/data/**", 
         "server/data/images/**/*",
         "server/data/*.json",

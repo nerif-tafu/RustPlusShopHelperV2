@@ -99,34 +99,64 @@
                 </div>
               </div>
               
-              <!-- FCM Status (Placeholder) -->
+              <!-- FCM Status -->
               <div class="status-row mt-3">
                 <div class="status-label" :style="getCaptionStyle()">FCM Connection</div>
                 <div class="status-indicator">
                   <v-chip
                     size="small"
-                    color="success"
+                    :color="fcmStatus.connected ? 'success' : 'error'"
                     class="status-chip"
                   >
-                    <v-icon size="x-small" start>mdi-check-circle</v-icon>
-                    Placeholder
+                    <v-icon size="x-small" start>
+                      {{ fcmStatus.connected ? 'mdi-check-circle' : 'mdi-alert-circle' }}
+                    </v-icon>
+                    {{ fcmStatus.connected ? 'Connected' : 'Disconnected' }}
                   </v-chip>
+                </div>
+                <div v-if="fcmStatus.lastConnected" class="text-caption" :style="getCaptionStyle()">
+                  Last connected: {{ formatDate(fcmStatus.lastConnected) }}
+                </div>
+                <div v-if="fcmStatus.lastError" class="text-caption text-error" :style="getCaptionStyle()">
+                  Error: {{ fcmStatus.lastError }}
                 </div>
               </div>
               
-              <!-- Expo Status (Placeholder) -->
+              <!-- Expo Status -->
               <div class="status-row mt-3">
                 <div class="status-label" :style="getCaptionStyle()">Expo Notifications</div>
                 <div class="status-indicator">
                   <v-chip
                     size="small"
-                    color="warning"
+                    :color="expoStatus.registered ? 'success' : 'warning'"
                     class="status-chip"
                   >
-                    <v-icon size="x-small" start>mdi-clock-outline</v-icon>
-                    Placeholder
+                    <v-icon size="x-small" start>
+                      {{ expoStatus.registered ? 'mdi-check-circle' : 'mdi-clock-outline' }}
+                    </v-icon>
+                    {{ expoStatus.registered ? 'Registered' : 'Not Registered' }}
                   </v-chip>
                 </div>
+                <div v-if="expoStatus.lastRegistered" class="text-caption" :style="getCaptionStyle()">
+                  Last registered: {{ formatDate(expoStatus.lastRegistered) }}
+                </div>
+                <div v-if="expoStatus.lastError" class="text-caption text-error" :style="getCaptionStyle()">
+                  Error: {{ expoStatus.lastError }}
+                </div>
+              </div>
+              
+              <!-- Reconnect Button -->
+              <div class="status-row mt-3" v-if="!fcmStatus.connected || !expoStatus.registered">
+                <v-btn
+                  size="small"
+                  color="primary"
+                  @click="attemptReconnection"
+                  :loading="isReconnecting"
+                  :style="getButtonStyle()"
+                >
+                  <v-icon left class="pr-2">mdi-refresh</v-icon>
+                  Reconnect Services
+                </v-btn>
               </div>
             </div>
           </div>
@@ -385,6 +415,21 @@ const rustplusStatus = ref({
   lastError: null,
   serverInfo: null
 });
+
+// FCM and Expo status
+const fcmStatus = ref({
+  connected: false,
+  lastConnected: null,
+  lastError: null
+});
+
+const expoStatus = ref({
+  registered: false,
+  lastRegistered: null,
+  lastError: null
+});
+
+const isReconnecting = ref(false);
 const socket = io();
 
 // Item database status
@@ -442,10 +487,12 @@ onMounted(async () => {
       }
     });
     
-    // Important: Fetch both server data and database status on component mount
+    // Important: Fetch server data, database status, and connection statuses on component mount
     await Promise.all([
       fetchServerData().catch(err => console.error('Error fetching server data:', err)),
-      fetchDatabaseStatus().catch(err => console.error('Error fetching database status:', err))
+      fetchDatabaseStatus().catch(err => console.error('Error fetching database status:', err)),
+      loadFCMStatus().catch(err => console.error('Error fetching FCM status:', err)),
+      loadExpoStatus().catch(err => console.error('Error fetching Expo status:', err))
     ]);
     
   } catch (error) {
@@ -484,6 +531,30 @@ async function loadRustPlusStatus() {
     }
   } catch (error) {
     console.error('Failed to load RustPlus status:', error);
+  }
+}
+
+// Load FCM status
+async function loadFCMStatus() {
+  try {
+    const response = await axios.get('/api/fcm/status');
+    if (response.data.success) {
+      fcmStatus.value = response.data.data;
+    }
+  } catch (error) {
+    console.error('Failed to load FCM status:', error);
+  }
+}
+
+// Load Expo status
+async function loadExpoStatus() {
+  try {
+    const response = await axios.get('/api/expo/status');
+    if (response.data.success) {
+      expoStatus.value = response.data.data;
+    }
+  } catch (error) {
+    console.error('Failed to load Expo status:', error);
   }
 }
 
@@ -617,6 +688,29 @@ function getProgressColor(progress) {
 // Save shop prefix for price undercutter
 function saveShopPrefix() {
   localStorage.setItem('shopPrefix', shopPrefix.value);
+}
+
+// Attempt to reconnect services
+async function attemptReconnection() {
+  try {
+    isReconnecting.value = true;
+    const response = await axios.post('/api/auth/reconnect');
+    
+    if (response.data.success) {
+      // Reload all statuses after successful reconnection
+      await Promise.all([
+        loadFCMStatus(),
+        loadExpoStatus(),
+        loadRustPlusStatus()
+      ]);
+    } else {
+      console.error('Reconnection failed:', response.data.error);
+    }
+  } catch (error) {
+    console.error('Failed to reconnect services:', error);
+  } finally {
+    isReconnecting.value = false;
+  }
 }
 
 // Steam login functionality removed - no longer needed

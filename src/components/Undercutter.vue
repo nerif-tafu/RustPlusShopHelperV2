@@ -1,12 +1,21 @@
 <template>
   <div class="undercutter-container">
 
+    <!-- Loading State -->
+    <div v-if="isLoading && undercutItems.length === 0 && allItems.length === 0" class="loading-container">
+      <div class="loading-content">
+        <v-progress-circular indeterminate color="primary" size="48"></v-progress-circular>
+        <p class="loading-text">Loading shop data...</p>
+      </div>
+    </div>
+
     <!-- Current Undercuts Section -->
-    <div v-if="undercutItems.length > 0" class="section-container">
+    <div v-else class="section-container">
       <h3 class="section-title">Current Undercuts</h3>
       <p class="section-description">Items where competitors are undercutting your prices</p>
       
-      <div v-for="listing in undercutItems" :key="`undercut-${listing.itemId}-${listing.allyShop.shopId}`" class="comparison-card undercut-card">
+      <div v-if="undercutItems.length > 0">
+        <div v-for="listing in undercutItems" :key="`undercut-${listing.itemId}-${listing.allyShop.shopId}`" class="comparison-card undercut-card">
         <!-- Item header -->
         <div class="item-header">
           <div class="item-info">
@@ -71,15 +80,25 @@
         <div class="recommendation">
           <span class="recommendation-text">Change your cost to {{ getCompetitivePrice(listing) }} {{ getCurrencyNameSync(listing.allyShop.currencyId) }} or less.</span>
         </div>
+        </div>
+      </div>
+      
+      <!-- No undercuts placeholder -->
+      <div v-else class="placeholder-box">
+        <v-alert type="success">
+          <h3>No Undercuts Found</h3>
+          <p>Great news! None of your items are being undercut by competitors.</p>
+        </v-alert>
       </div>
     </div>
 
     <!-- All Your Items Section -->
-    <div v-if="allItems.length > 0" class="section-container">
+    <div v-if="!isLoading || (undercutItems.length > 0 || allItems.length > 0)" class="section-container">
       <h3 class="section-title">All Your Items</h3>
       <p class="section-description">All items you're selling with competitor price comparisons</p>
       
-      <div v-for="item in allItems" :key="`all-${item.itemId}-${item.allyShop.shopId}`" class="comparison-card all-items-card">
+      <div v-if="allItems.length > 0">
+        <div v-for="item in allItems" :key="`all-${item.itemId}-${item.allyShop.shopId}`" class="comparison-card all-items-card">
         <!-- Item header -->
         <div class="item-header">
           <div class="item-info">
@@ -150,25 +169,19 @@
             </div>
           </div>
         </div>
+        </div>
+      </div>
+      
+      <!-- No items placeholder -->
+      <div v-else class="placeholder-box">
+        <v-alert type="info">
+          <h3>No Items Found</h3>
+          <p>No vending machines matching your shop prefix were found.</p>
+          <p>Please configure your shop prefix in the Settings page.</p>
+        </v-alert>
       </div>
     </div>
 
-    <!-- No data messages -->
-    <div v-if="undercutItems.length === 0 && allItems.length === 0" class="info-box">
-        <v-alert type="info">
-        <h3>No Items Found</h3>
-        <p>No vending machines matching your shop prefix were found.</p>
-        <p>Please configure your shop prefix in the Settings page.</p>
-        </v-alert>
-    </div>
-
-    <!-- No undercuts message -->
-    <div v-else-if="undercutItems.length === 0 && allItems.length > 0" class="success-box">
-        <v-alert type="success">
-          <h3>No Undercuts Found</h3>
-          <p>Great news! None of your items are being undercut by competitors.</p>
-        </v-alert>
-                    </div>
 
     <!-- Sticky Status Bar -->
     <div class="sticky-status-bar">
@@ -366,7 +379,7 @@ async function loadVendingMachines() {
                   // Calculate if this competitor is actually undercutting
                   const yourPricePerUnit = undercut.allyShop.price / undercut.allyShop.quantity;
                   const enemyPricePerUnit = enemyItem.costPerItem / enemyItem.quantity;
-                  const isUndercutting = enemyPricePerUnit < yourPricePerUnit;
+                  const isUndercutting = enemyPricePerUnit <= yourPricePerUnit;
                   
                   allCompetitors.push({
                     ...enemyShop,
@@ -467,7 +480,7 @@ async function loadVendingMachines() {
                       // Calculate if this competitor is actually undercutting
                       const yourPricePerUnit = shopItem.costPerItem / (shopItem.quantity || 1);
                       const enemyPricePerUnit = enemyItem.costPerItem / enemyItem.quantity;
-                      const isUndercutting = enemyPricePerUnit < yourPricePerUnit;
+                      const isUndercutting = enemyPricePerUnit <= yourPricePerUnit;
                       
                       itemEnemyShops.push({
                         ...enemyShop,
@@ -497,7 +510,7 @@ async function loadVendingMachines() {
                 if (hasMeaningfulStock) {
                   const yourPricePerUnit = shopItem.costPerItem / (shopItem.quantity || 1);
                   const enemyPricePerUnit = enemyShop.price / enemyShop.quantity;
-                  const isUndercutting = enemyPricePerUnit < yourPricePerUnit;
+                  const isUndercutting = enemyPricePerUnit <= yourPricePerUnit;
                   
                   itemEnemyShops.push({
                     ...enemyShop,
@@ -579,7 +592,7 @@ async function loadVendingMachines() {
           console.log('Cost per item:', shopItem.costPerItem);
           console.log('Item details from DB:', itemDetails);
           
-          // Check if this item is being undercut (at least one competitor is undercutting)
+          // Check if this item is being undercut (at least one competitor is undercutting or matching)
           const isBeingUndercut = itemEnemyShops.some(enemy => enemy.isUndercutting);
           
           // Only add to "All Your Items" if it's NOT being undercut
@@ -700,28 +713,27 @@ function calculateRatio(price, quantity) {
 function getCompetitivePrice(listing) {
   if (!listing.enemyShops || listing.enemyShops.length === 0) return 0;
   
-  // Calculate what price we need to offer a better ratio than all competitors
-  const yourQuantity = listing.allyShop.quantity;
   const yourCurrentPrice = listing.allyShop.price;
-  const yourCurrentRatio = yourQuantity / yourCurrentPrice;
   
-  let bestCompetitorRatio = 0;
+  // Find the best (lowest) price per unit among competitors
+  let bestCompetitorPricePerUnit = Infinity;
   
-  // Find the best ratio among competitors
   listing.enemyShops.forEach(enemy => {
-    const enemyRatio = (enemy.quantity || 1) / enemy.price;
-    if (enemyRatio > bestCompetitorRatio) {
-      bestCompetitorRatio = enemyRatio;
+    const enemyPricePerUnit = enemy.price / (enemy.quantity || 1);
+    if (enemyPricePerUnit < bestCompetitorPricePerUnit) {
+      bestCompetitorPricePerUnit = enemyPricePerUnit;
     }
   });
   
-  // Calculate the price we need to beat the best competitor ratio
-  // We want: yourQuantity / newPrice > bestCompetitorRatio
-  // So: newPrice < yourQuantity / bestCompetitorRatio
-  const competitivePrice = Math.floor(yourQuantity / bestCompetitorRatio);
+  // Calculate what price we need to undercut the best competitor
+  // We want to be at least 1 unit cheaper per item
+  const yourQuantity = listing.allyShop.quantity;
+  const targetPricePerUnit = bestCompetitorPricePerUnit - 1;
+  const competitivePrice = Math.floor(targetPricePerUnit * yourQuantity);
   
   // Make sure we're actually undercutting (price should be lower than current)
-  return Math.min(competitivePrice, yourCurrentPrice - 1);
+  // and that we don't go below 1 unit
+  return Math.max(1, Math.min(competitivePrice, yourCurrentPrice - 1));
 }
 
 // Helper function to format time for display
@@ -967,6 +979,31 @@ function formatTime(date) {
   padding: 16px;
   border-radius: 8px;
   grid-column: 1 / -1; /* Span both columns */
+}
+
+.placeholder-box {
+  margin-top: 16px;
+}
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+  grid-column: 1 / -1;
+}
+
+.loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.loading-text {
+  color: #9D7D99;
+  font-size: 1rem;
+  margin: 0;
 }
 
 /* Responsive: stack on mobile */

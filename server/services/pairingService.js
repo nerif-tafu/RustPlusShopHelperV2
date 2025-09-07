@@ -24,8 +24,80 @@ let currentFcmCredentials = null;
 // Timestamp for filtering messages
 let pairingRequestTimestamp = Date.now();
 
+// Persistent authentication storage
+const fs = require('fs');
+const path = require('path');
+
+// Status tracking for FCM and Expo
+let fcmStatus = {
+    connected: false,
+    lastConnected: null,
+    lastError: null,
+    credentials: null
+};
+
+let expoStatus = {
+    registered: false,
+    lastRegistered: null,
+    lastError: null,
+    pushToken: null
+};
+
 function getPairingStatus() {
     return pairingStatus;
+}
+
+// Save authentication data to persistent storage
+function saveAuthData(authData) {
+    try {
+        const authFilePath = path.join(__dirname, '..', 'authData.json');
+        const dataToSave = {
+            ...authData,
+            savedAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // 24 hours
+        };
+        fs.writeFileSync(authFilePath, JSON.stringify(dataToSave, null, 2));
+        console.log('Authentication data saved successfully');
+        return true;
+    } catch (error) {
+        console.error('Failed to save authentication data:', error);
+        return false;
+    }
+}
+
+// Load authentication data from persistent storage
+function loadAuthData() {
+    try {
+        const authFilePath = path.join(__dirname, '..', 'authData.json');
+        if (!fs.existsSync(authFilePath)) {
+            return null;
+        }
+        
+        const data = JSON.parse(fs.readFileSync(authFilePath, 'utf8'));
+        
+        // Check if the data has expired
+        if (data.expiresAt && new Date(data.expiresAt) < new Date()) {
+            console.log('Authentication data has expired, removing...');
+            fs.unlinkSync(authFilePath);
+            return null;
+        }
+        
+        console.log('Authentication data loaded successfully');
+        return data;
+    } catch (error) {
+        console.error('Failed to load authentication data:', error);
+        return null;
+    }
+}
+
+// Get FCM status
+function getFCMStatus() {
+    return fcmStatus;
+}
+
+// Get Expo status
+function getExpoStatus() {
+    return expoStatus;
 }
 
 // Generate a random FCM token
@@ -55,10 +127,22 @@ async function registerWithRustPlus(authToken) {
         
         // Store for later reuse
         currentFcmCredentials = fcmCredentials;
+        
+        // Update FCM status
+        fcmStatus.connected = true;
+        fcmStatus.lastConnected = new Date();
+        fcmStatus.lastError = null;
+        fcmStatus.credentials = fcmCredentials;
 
         // Get Expo Push Token
         console.log('Getting Expo Push Token...');
         const expoPushToken = await getExpoPushToken(fcmCredentials.fcm.token);
+        
+        // Update Expo status
+        expoStatus.registered = true;
+        expoStatus.lastRegistered = new Date();
+        expoStatus.lastError = null;
+        expoStatus.pushToken = expoPushToken;
         
         // Register with Rust+ using Expo token
         console.log('Registering with Rust+...');
@@ -79,6 +163,15 @@ async function registerWithRustPlus(authToken) {
 
         console.log('Registration successful');
         
+        // Save authentication data for persistence
+        const authData = {
+            authToken,
+            fcmCredentials,
+            expoPushToken,
+            registerData
+        };
+        saveAuthData(authData);
+        
         // Start listening for pairing notification with timestamp filter
         console.log('Waiting for pairing notification from Rust game...');
         const serverInfo = await listenForPairingNotification(fcmCredentials, pairingRequestTimestamp);
@@ -90,6 +183,11 @@ async function registerWithRustPlus(authToken) {
         };
     } catch (error) {
         console.error('Registration error:', error);
+        
+        // Update error status
+        fcmStatus.lastError = error.message;
+        expoStatus.lastError = error.message;
+        
         throw error;
     }
 }
@@ -303,10 +401,91 @@ async function restartPairingListener() {
     return { success: true };
 }
 
+// Attempt to reconnect using saved authentication data
+async function attemptReconnection() {
+    try {
+        const savedAuthData = loadAuthData();
+        if (!savedAuthData) {
+            throw new Error('No saved authentication data found');
+        }
+        
+        console.log('Attempting reconnection with saved authentication data...');
+        
+        // Restore FCM credentials
+        currentFcmCredentials = savedAuthData.fcmCredentials;
+        fcmStatus.connected = true;
+        fcmStatus.lastConnected = new Date();
+        fcmStatus.credentials = savedAuthData.fcmCredentials;
+        
+        // Restore Expo status
+        expoStatus.registered = true;
+        expoStatus.lastRegistered = new Date();
+        expoStatus.pushToken = savedAuthData.expoPushToken;
+        
+        // Try to re-register with Rust+ using saved data
+        const response = await axios.post('https://companion-rust.facepunch.com/api/push/register', savedAuthData.registerData, {
+            allowAbsoluteUrls: true,
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+            }
+        });
+        
+        console.log('Reconnection successful');
+        return { success: true, message: 'Reconnected successfully' };
+        
+    } catch (error) {
+        console.error('Reconnection failed:', error);
+        
+        // Update error status
+        fcmStatus.lastError = error.message;
+        expoStatus.lastError = error.message;
+        
+        return { success: false, error: error.message };
+    }
+}
+
+// Initialize authentication on service startup
+async function initializeAuth() {
+    try {
+        const savedAuthData = loadAuthData();
+        if (savedAuthData) {
+            console.log('Found saved authentication data, attempting to restore...');
+            const result = await attemptReconnection();
+            if (result.success) {
+                console.log('Authentication restored successfully');
+            } else {
+                console.log('Failed to restore authentication:', result.error);
+            }
+        }
+        
+        // Set up periodic reconnection attempts
+        setInterval(async () => {
+            if (!fcmStatus.connected || !expoStatus.registered) {
+                console.log('FCM or Expo disconnected, attempting reconnection...');
+                try {
+                    await attemptReconnection();
+                } catch (error) {
+                    console.error('Periodic reconnection failed:', error);
+                }
+            }
+        }, 30 * 60 * 1000); // Check every 30 minutes
+        
+    } catch (error) {
+        console.error('Error during authentication initialization:', error);
+    }
+}
+
 module.exports = {
     initializePairing,
     registerWithRustPlus,
     listenForPairingNotification,
     getPairingStatus,
-    restartPairingListener
+    restartPairingListener,
+    getFCMStatus,
+    getExpoStatus,
+    attemptReconnection,
+    initializeAuth,
+    saveAuthData,
+    loadAuthData
 }; 
