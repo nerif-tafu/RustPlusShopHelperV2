@@ -32,6 +32,10 @@ const announcedUndercutKeys = new Set();
 // Keep last computed undercuts for summary replies
 let lastUndercutItems = [];
 
+// Track last seen stock per ally shop item to detect out-of-stock transitions
+// key format: `${shopId}::${itemId}::${currencyId}` -> number (amountInStock)
+const lastStockByItemKey = new Map();
+
 // Helper to build a stable undercut key
 function makeUndercutKey(allyShopId, itemId, currencyId) {
   return `${allyShopId}::${itemId}::${currencyId}`;
@@ -839,10 +843,28 @@ function getMapMarkers() {
  */
 function calculateUndercutPrices(allyShops, enemyShops) {
   const undercutItems = [];
+  const outOfStockLines = []; // queued notifications for new OOS events
   
   // For each ally shop, check if any of their items are being undercut
   allyShops.forEach(allyShop => {
     allyShop.shopContents.forEach(allyItem => {
+      // Detect out-of-stock transition for this ally item
+      try {
+        const stockKey = makeUndercutKey(allyShop.entid, allyItem.itemId, allyItem.currencyId);
+        const currentStock = Number(allyItem.amountInStock || 0);
+        const prevStock = lastStockByItemKey.has(stockKey) ? lastStockByItemKey.get(stockKey) : null;
+        if (prevStock !== null && prevStock > 0 && currentStock <= 0) {
+          const itemEmoji = getEmojiTagByItemId(allyItem.itemId) || `Item ${allyItem.itemId}`;
+          const currencyEmoji = getEmojiTagByItemId(allyItem.currencyId) || resolveItemName(allyItem.currencyId);
+          const shopLabel = allyShop.shopName || `Shop ${allyShop.entid}`;
+          const qty = Number(allyItem.quantity) || 1;
+          const price = Number(allyItem.costPerItem) || 0;
+          outOfStockLines.push(`${shopLabel} | ${qty}x ${itemEmoji} -> ${price}x ${currencyEmoji}`);
+        }
+        // Update cache
+        lastStockByItemKey.set(stockKey, currentStock);
+      } catch {}
+
       // Find the same item in enemy shops by itemId
       const enemyItems = [];
       
@@ -941,6 +963,13 @@ function calculateUndercutPrices(allyShops, enemyShops) {
   } catch (e) {
     console.warn('Failed to send undercut notifications:', e);
   }
+
+  // Send notifications for newly out-of-stock items
+  try {
+    if (outOfStockLines.length > 0 && rustplusInstance && connectionStatus.connected) {
+      sendTeamMessagesSequential(['Out of stock:', ...outOfStockLines.slice(0, 50)]);
+    }
+  } catch {}
 
   // Store last undercut list for summary replies
   lastUndercutItems = undercutItems;
