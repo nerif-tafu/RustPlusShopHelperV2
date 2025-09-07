@@ -394,10 +394,9 @@ async function loadVendingMachines() {
           if (enemyShop.shopContents && Array.isArray(enemyShop.shopContents)) {
             enemyShop.shopContents.forEach(enemyItem => {
               if (enemyItem.itemId === undercut.itemId && enemyItem.currencyId === undercut.allyShop.currencyId) {
-                // Only consider competitors that have meaningful stock (amountInStock > 1)
-                // Use amountInStock instead of quantity - quantity is per transaction, amountInStock is actual stock
+                // Consider competitors with any stock (>= 1)
                 const enemyStock = enemyItem.amountInStock || 0;
-                const hasMeaningfulStock = enemyStock > 1;
+                const hasMeaningfulStock = enemyStock >= 1;
                 console.log(`Checking competitor ${enemyShop.shopName} for item ${enemyItem.itemId}:`, {
                   quantity: enemyItem.quantity,
                   amountInStock: enemyStock,
@@ -504,7 +503,7 @@ async function loadVendingMachines() {
                   if (enemyItem.itemId === shopItem.itemId && enemyItem.currencyId === shopItem.currencyId) {
                     // Only consider competitors that have meaningful stock (amountInStock > 1)
                     const enemyStock = enemyItem.amountInStock || 0;
-                    const hasMeaningfulStock = enemyStock > 1;
+                    const hasMeaningfulStock = enemyStock >= 1;
                     console.log(`All Items - Checking competitor ${enemyShop.shopName} for item ${enemyItem.itemId}:`, {
                       quantity: enemyItem.quantity,
                       amountInStock: enemyStock,
@@ -535,7 +534,7 @@ async function loadVendingMachines() {
               } else if (enemyShop.itemId === shopItem.itemId && enemyShop.currencyId === shopItem.currencyId) {
                 // Direct itemId match (old structure) - also check currency
                 const enemyStock = enemyShop.amountInStock || 0;
-                const hasMeaningfulStock = enemyStock > 1;
+                const hasMeaningfulStock = enemyStock >= 1;
                 console.log(`All Items (Old Structure) - Checking competitor ${enemyShop.shopName} for item ${enemyShop.itemId}:`, {
                   quantity: enemyShop.quantity,
                   amountInStock: enemyStock,

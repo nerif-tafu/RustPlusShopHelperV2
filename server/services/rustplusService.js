@@ -13,6 +13,30 @@ let connectionStatus = {
   serverInfo: null,
   mapMarkers: null
 };
+// Configurable notification delay (ms)
+let undercutNotificationDelayMs = 1000; // default 1s
+
+function setUndercutNotificationDelay(seconds) {
+  // clamp 0.5 - 5 seconds
+  const clamped = Math.max(0.5, Math.min(5, Number(seconds) || 1));
+  undercutNotificationDelayMs = Math.round(clamped * 1000);
+}
+
+function getUndercutNotificationDelaySec() {
+  return undercutNotificationDelayMs / 1000;
+}
+
+// Track last announced undercuts to avoid duplicate notifications
+const announcedUndercutKeys = new Set();
+
+// Keep last computed undercuts for summary replies
+let lastUndercutItems = [];
+
+// Helper to build a stable undercut key
+function makeUndercutKey(allyShopId, itemId, currencyId) {
+  return `${allyShopId}::${itemId}::${currencyId}`;
+}
+
 let checkSubscriptionInterval = null;
 const CHECK_INTERVAL = 10000; // Check every 10 seconds
 
@@ -151,6 +175,38 @@ function setupEventListeners() {
       const io = socketInstance.getIO();
       io.emit('mapMarkers', message.response.mapMarkers);
     }
+
+    // Detect team chat '!undercut' via generic message stream
+    try {
+      const r = message?.response;
+      const candidate = message?.broadcast?.teamMessage?.message || r?.broadcast?.teamMessage?.message || r?.teamMessage?.message;
+      let text = '';
+      if (typeof candidate === 'string') {
+        text = candidate;
+      } else if (candidate && typeof candidate.message === 'string') {
+        text = candidate.message;
+      } else if (candidate && candidate.message != null) {
+        text = String(candidate.message);
+      }
+      const lower = text && text.trim().toLowerCase();
+      if (lower === '!undercut') {
+        console.log('Detected !undercut command from team chat');
+        const lines = buildUndercutSummaryForTeamLines();
+        if (lines && lines.length > 0) {
+          sendTeamMessagesSequential(lines);
+        } else if (rustplusInstance) {
+          rustplusInstance.sendTeamMessage('No current undercuts detected.', () => {});
+        }
+      } else if (lower === '!stock') {
+        console.log('Detected !stock command from team chat');
+        const lines = buildOutOfStockSummaryLines();
+        if (lines && lines.length > 0) {
+          sendTeamMessagesSequential(lines);
+        } else if (rustplusInstance) {
+          rustplusInstance.sendTeamMessage('No out-of-stock items found.', () => {});
+        }
+      }
+    } catch {}
   });
   
   // Team message received
@@ -160,6 +216,30 @@ function setupEventListeners() {
     // Emit team message to clients
   const io = socketInstance.getIO();
     io.emit('teamMessage', message);
+
+    try {
+      const text = message?.message?.message?.toString()?.trim() || '';
+      if (!text) return;
+      const lower = text.toLowerCase();
+      // Simple command: !undercut → reply with undercut summary
+      if (lower === '!undercut') {
+        const summary = buildUndercutSummaryForTeamLines();
+        if (summary && summary.length > 0) {
+          sendTeamMessagesSequential(summary);
+        } else {
+          rustplusInstance.sendTeamMessage('No current undercuts detected.', () => {});
+        }
+      } else if (lower === '!stock') {
+        const lines = buildOutOfStockSummaryLines();
+        if (lines && lines.length > 0) {
+          sendTeamMessagesSequential(lines);
+        } else {
+          rustplusInstance.sendTeamMessage('No out-of-stock items found.', () => {});
+        }
+      }
+    } catch (e) {
+      console.warn('Failed handling team command:', e);
+    }
   });
   
   // Smart alarm triggered
@@ -768,12 +848,12 @@ function calculateUndercutPrices(allyShops, enemyShops) {
       
       enemyShops.forEach(enemyShop => {
         const matchingItem = enemyShop.shopContents.find(item => 
-          item.itemId === allyItem.itemId
+          item.itemId === allyItem.itemId && item.currencyId === allyItem.currencyId
         );
         
         if (matchingItem) {
           // Only compare if they use the same currency AND have stock
-          if (matchingItem.currencyId === allyItem.currencyId && (matchingItem.amountInStock || 0) > 0) {
+          if (matchingItem.currencyId === allyItem.currencyId && (matchingItem.amountInStock || 0) >= 1) {
             enemyItems.push({
               shopName: enemyShop.shopName,
               shopId: enemyShop.entid,
@@ -790,7 +870,9 @@ function calculateUndercutPrices(allyShops, enemyShops) {
       if (enemyItems.length > 0) {
         // Calculate price per unit for comparison
         const allyPricePerUnit = allyItem.costPerItem / (allyItem.quantity || 1);
-        const lowestEnemyPricePerUnit = Math.min(...enemyItems.map(item => item.price / (item.quantity || 1)));
+        // Choose best (lowest) price-per-unit among all qualifying competitors
+        const ppuList = enemyItems.map(item => item.price / (item.quantity || 1));
+        const lowestEnemyPricePerUnit = Math.min(...ppuList);
         
         if (lowestEnemyPricePerUnit <= allyPricePerUnit) {
           // Get item details from the database (safely)
@@ -818,11 +900,15 @@ function calculateUndercutPrices(allyShops, enemyShops) {
               pricePerUnit: allyPricePerUnit,
               currencyImage: `/api/items/${allyItem.currencyId}/image`
             },
-            enemyShops: enemyItems.filter(item => (item.price / (item.quantity || 1)) <= allyPricePerUnit).map(item => ({
-              ...item,
-              pricePerUnit: item.price / (item.quantity || 1),
-              currencyImage: `/api/items/${item.currencyId}/image`
-            })),
+            enemyShops: enemyItems
+              .map(item => ({
+                ...item,
+                pricePerUnit: item.price / (item.quantity || 1),
+                currencyImage: `/api/items/${item.currencyId}/image`
+              }))
+              .filter(item => item.pricePerUnit <= allyPricePerUnit)
+              .sort((a, b) => a.pricePerUnit - b.pricePerUnit),
+            
             itemId: allyItem.itemId,
             itemName: itemDetails ? itemDetails.name : `Item ${allyItem.itemId}`,
             itemImage: itemDetails ? `/api/items/${allyItem.itemId}/image` : null,
@@ -836,6 +922,29 @@ function calculateUndercutPrices(allyShops, enemyShops) {
     });
   });
   
+  // Send notifications for new undercuts
+  try {
+    if (undercutItems.length > 0 && rustplusInstance && connectionStatus.connected) {
+      const newlySeen = [];
+      undercutItems.forEach(u => {
+        const key = makeUndercutKey(u.allyShop.shopId, u.itemId, u.allyShop.currencyId);
+        if (!announcedUndercutKeys.has(key)) {
+          announcedUndercutKeys.add(key);
+          newlySeen.push(u);
+        }
+      });
+      if (newlySeen.length > 0) {
+        const lines = buildUndercutDetectedLines(newlySeen);
+        sendTeamMessagesSequential(lines);
+      }
+    }
+  } catch (e) {
+    console.warn('Failed to send undercut notifications:', e);
+  }
+
+  // Store last undercut list for summary replies
+  lastUndercutItems = undercutItems;
+
   return undercutItems;
 }
 
@@ -921,5 +1030,185 @@ module.exports = {
   getCachedMapMarkers,
   transformVendingMachines,
   refreshMapMarkers,
-  isReady
+  isReady,
+  setUndercutNotificationDelay,
+  getUndercutNotificationDelaySec
 }; 
+
+// ===== Helpers for team messages =====
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function sendTeamMessagesSequential(lines) {
+  (async () => {
+    for (const line of lines) {
+      try {
+        rustplusInstance.sendTeamMessage(line, () => {});
+      } catch {}
+      await sleep(undercutNotificationDelayMs);
+    }
+  })();
+}
+
+function buildUndercutDetectedLines(items) {
+  const header = `Undercut detected`;
+  const lines = [header];
+  const maxLines = 20; // safety cap
+  const take = Math.min(items.length, maxLines);
+  for (let i = 0; i < take; i++) {
+    const u = items[i];
+    const itemEmoji = getEmojiTagByItemId(u.itemId) || (u.itemName || `Item ${u.itemId}`);
+    const best = Array.isArray(u.enemyShops) && u.enemyShops.length > 0
+      ? u.enemyShops[0]
+      : null;
+    // Prefer competitor details; fallback to ally if none
+    const qty = best ? (best.quantity || 1) : (u.allyShop.quantity || 1);
+    const price = best ? (best.price || 0) : (u.allyShop.price || 0);
+    const currencyId = best ? best.currencyId : u.allyShop.currencyId;
+    const shopId = best ? best.shopId : u.allyShop.shopId;
+    const currencyEmoji = getEmojiTagByItemId(currencyId) || resolveItemName(currencyId);
+    const grid = getGridLabelForShop(shopId) || '??';
+    const ratio = qty > 0 ? (price / qty).toFixed(2) : 'N/A';
+    lines.push(`@${grid} | ${qty}x ${itemEmoji} -> ${price}x ${currencyEmoji} | 1:${ratio}`);
+  }
+  if (items.length > maxLines) lines.push(`...and ${items.length - maxLines} more`);
+  return lines;
+}
+
+function buildUndercutSummaryForTeamLines() {
+  if (!lastUndercutItems || lastUndercutItems.length === 0) return [];
+  const header = `Current undercuts: ${lastUndercutItems.length}`;
+  const lines = [header];
+  const maxLines = 50; // safety cap
+  const take = Math.min(lastUndercutItems.length, maxLines);
+  for (let i = 0; i < take; i++) {
+    const u = lastUndercutItems[i];
+    const itemEmoji = getEmojiTagByItemId(u.itemId) || (u.itemName || `Item ${u.itemId}`);
+    const best = Array.isArray(u.enemyShops) && u.enemyShops.length > 0
+      ? u.enemyShops[0]
+      : null;
+    const qty = best ? (best.quantity || 1) : (u.allyShop.quantity || 1);
+    const price = best ? (best.price || 0) : (u.allyShop.price || 0);
+    const currencyId = best ? best.currencyId : u.allyShop.currencyId;
+    const shopId = best ? best.shopId : u.allyShop.shopId;
+    const currencyEmoji = getEmojiTagByItemId(currencyId) || resolveItemName(currencyId);
+    const grid = getGridLabelForShop(shopId) || '??';
+    const ratio = qty > 0 ? (price / qty).toFixed(2) : 'N/A';
+    lines.push(`@${grid} | ${qty}x ${itemEmoji} -> ${price}x ${currencyEmoji} | 1:${ratio}`);
+  }
+  if (lastUndercutItems.length > maxLines) lines.push(`...and ${lastUndercutItems.length - maxLines} more`);
+  return lines;
+}
+
+// Compute recommended total price to list at, ensuring at least 1 less per unit
+function computeRecommendedPrice(undercut) {
+  try {
+    const qty = undercut?.allyShop?.quantity || 1;
+    if (!qty || qty <= 0) return null;
+    const enemies = undercut?.enemyShops || [];
+    if (!enemies.length) return null;
+    let bestPPU = Infinity;
+    for (const e of enemies) {
+      const q = e.quantity || 1;
+      const ppu = q > 0 ? (e.price / q) : Infinity;
+      if (!isFinite(ppu)) continue;
+      if (ppu < bestPPU) bestPPU = ppu;
+    }
+    if (!isFinite(bestPPU) || bestPPU === Infinity) return null;
+    const recommendedPPU = Math.max(0, Math.floor(bestPPU - 1));
+    const total = Math.max(1, recommendedPPU * qty);
+    return total;
+  } catch {
+    return null;
+  }
+}
+
+// ===== Emoji helpers =====
+function resolveItemName(id) {
+  try {
+    const info = rustAssetManager.getItemById(id) || rustAssetManager.getItemByNumericId(id);
+    return info?.name || `Item ${id}`;
+  } catch {
+    return `Item ${id}`;
+  }
+}
+
+function getEmojiTagByItemId(id) {
+  try {
+    const info = rustAssetManager.getItemById(id) || rustAssetManager.getItemByNumericId(id);
+    if (!info || !info.shortname) return null;
+    // Rust in-game chat supports item emojis via :shortname:
+    // e.g., :rifle.semiauto:, :crude.oil:
+    return `:${info.shortname}:`;
+  } catch {
+    return null;
+  }
+}
+
+// Build out-of-stock summary (ally shops with amountInStock <= 0)
+function buildOutOfStockSummaryLines() {
+  try {
+    const markers = connectionStatus.mapMarkers?.markers || [];
+    const vms = markers.filter(m => m && (m.type === 3 || m.type === 'VendingMachine'));
+    const lines = ['Out of stock:'];
+    let count = 0;
+    const maxLines = 50;
+    for (const vm of vms) {
+      const shopLabel = vm.name || vm.shopName || `Shop ${vm.id}`;
+      const sells = vm.sellOrders || vm.sell_orders || [];
+      for (const so of sells) {
+        const stock = Number(so.amountInStock ?? so.amount_in_stock ?? 0);
+        if (stock <= 0) {
+          const itemEmoji = getEmojiTagByItemId(so.itemId ?? so.item_id) || resolveItemName(so.itemId ?? so.item_id);
+          const currencyEmoji = getEmojiTagByItemId(so.currencyId ?? so.currency_id) || resolveItemName(so.currencyId ?? so.currency_id);
+          const qty = Number(so.quantity) || 1;
+          const price = Number(so.costPerItem ?? so.cost_per_item) || 0;
+          lines.push(`${shopLabel} | ${qty}x ${itemEmoji} -> ${price}x ${currencyEmoji}`);
+          count++;
+          if (count >= maxLines) break;
+        }
+      }
+      if (count >= maxLines) break;
+    }
+    if (count === 0) return [];
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
+// Convert Rust map coordinates to grid label using 150m cells and estimated world size
+function getGridLabelForShop(shopId) {
+  try {
+    if (!connectionStatus.mapMarkers || !connectionStatus.mapMarkers.markers) return null;
+    const markers = connectionStatus.mapMarkers.markers;
+    const vm = markers.find(m => (m.type === 3 || m.type === 'VendingMachine') && m.id === shopId);
+    if (!vm) return null;
+    const worldSize = estimateWorldSize(markers);
+    const gridDiameter = 150;
+    const first = convertNumberToLetter(Math.floor(vm.x / gridDiameter));
+    const second = Math.floor((worldSize - vm.y) / gridDiameter);
+    return `${first}${second}`;
+  } catch {
+    return null;
+  }
+}
+
+function estimateWorldSize(markers) {
+  let maxCoord = 0;
+  for (const m of markers) {
+    if (typeof m.x === 'number') maxCoord = Math.max(maxCoord, m.x);
+    if (typeof m.y === 'number') maxCoord = Math.max(maxCoord, m.y);
+  }
+  const rounded = Math.ceil(maxCoord / 150) * 150;
+  return Math.max(3000, rounded);
+}
+
+function convertNumberToLetter(num) {
+  const mod = num % 26;
+  let pow = (num / 26) | 0;
+  const out = mod ? String.fromCharCode(65 + mod) : (pow--, 'Z');
+  return pow ? 'A' + out : out;
+}
