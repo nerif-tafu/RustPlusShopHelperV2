@@ -78,7 +78,7 @@
     </div>
 
     <!-- Map Modal -->
-    <v-dialog v-model="mapModalVisible" max-width="800px">
+    <v-dialog v-model="mapModalVisible" max-width="1200px">
       <v-card class="map-modal">
         <v-card-title class="map-modal-title">
           <span>Map View</span>
@@ -97,27 +97,48 @@
             <div v-if="mapData.image" class="map-image-wrapper">
               <!-- Shop location info -->
               <div v-if="selectedShop" class="shop-location-info">
-                <strong>{{ selectedShop.shopName }}</strong> - Grid: {{ selectedShop.x.toFixed(0) }}, {{ selectedShop.y.toFixed(0) }}
+                <strong>{{ selectedShop.shopName }}</strong>
+                <div>Coords: ({{ selectedShop.x.toFixed(0) }}, {{ selectedShop.y.toFixed(0) }})</div>
+                <div v-if="mapData?.gridConfig">Grid: {{ getGridLabel(selectedShop) }}</div>
               </div>
-              
-              <img 
-                ref="mapImageRef"
-                :src="mapData.image" 
-                alt="Rust Map" 
-                class="map-image"
-                @load="onMapImageLoad"
-              />
-              
-              <!-- Shop marker -->
-              <div v-if="selectedShop && mapImageSize.width" class="shop-marker" :style="getMarkerPosition(selectedShop)">
-                <v-icon color="red" :size="getMarkerIconSize()">mdi-map-marker</v-icon>
-                <span class="marker-label" :style="getMarkerLabelStyle()">{{ selectedShop.shopName }}</span>
+
+              <!-- Zoomable, pannable content -->
+              <div 
+                ref="mapContentRef"
+                class="map-content"
+                :style="getMapTransformStyle()"
+                @wheel.prevent="onMapWheel"
+                @mousedown="onMapMouseDown"
+              >
+                <img 
+                  ref="mapImageRef"
+                  :src="mapData.image" 
+                  alt="Rust Map" 
+                  class="map-image"
+                  draggable="false"
+                  @dragstart.prevent
+                  @load="onMapImageLoad"
+                />
+                <canvas ref="gridCanvasRef" class="grid-canvas"></canvas>
+                
+                <!-- Shop marker -->
+                <div v-if="selectedShop && mapImageSize.width" class="shop-marker" :style="getMarkerPosition(selectedShop)">
+                  <v-icon color="red" :size="getMarkerIconSize()">mdi-map-marker</v-icon>
+                  <span class="marker-label" :style="getMarkerLabelStyle()">{{ selectedShop.shopName }}</span>
+                </div>
+              </div>
+
+              <!-- Zoom controls -->
+              <div class="zoom-controls">
+                <v-btn icon size="small" @click="zoomIn"><v-icon>mdi-plus</v-icon></v-btn>
+                <v-btn icon size="small" @click="zoomOut"><v-icon>mdi-minus</v-icon></v-btn>
+                <v-btn icon size="small" @click="resetZoom"><v-icon>mdi-refresh</v-icon></v-btn>
               </div>
               
               <!-- Debug info -->
               <div v-if="selectedShop && showDebugInfo" class="debug-info">
                 <p><strong>Raw coords:</strong> {{ selectedShop.x }}, {{ selectedShop.y }}</p>
-                <p><strong>Grid coords:</strong> {{ getGridCoordinates(selectedShop) }}</p>
+                <p><strong>Grid coords:</strong> {{ getGridLabel(selectedShop) }}</p>
                 <p><strong>Detected range:</strong> {{ getDetectedMapRange(selectedShop) }}</p>
                 <p><strong>Normalized:</strong> {{ getNormalizedCoords(selectedShop) }}</p>
                 <p><strong>Final position:</strong> {{ getFinalPosition(selectedShop) }}</p>
@@ -125,17 +146,7 @@
                 <p><strong>Map dimensions:</strong> {{ mapData?.width || 'unknown' }} × {{ mapData?.height || 'unknown' }}</p>
               </div>
               
-              <!-- Debug toggle button -->
-              <v-btn 
-                v-if="selectedShop"
-                @click="showDebugInfo = !showDebugInfo"
-                class="debug-toggle"
-                size="small"
-                color="primary"
-                variant="outlined"
-              >
-                {{ showDebugInfo ? 'Hide' : 'Show' }} Debug
-              </v-btn>
+              
             </div>
             <div v-else class="map-data-info">
               <p>Map data received but no image found.</p>
@@ -195,6 +206,17 @@ const mapData = ref(null);
 const selectedShop = ref(null);
 const mapImageSize = ref({ width: 0, height: 0 });
 const mapImageRef = ref(null);
+const gridCanvasRef = ref(null);
+const mapContentRef = ref(null);
+
+// Zoom / Pan state
+const mapScale = ref(2);
+const minScale = 0.5;
+const maxScale = 4;
+const translate = ref({ x: 0, y: 0 });
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+let translateStart = { x: 0, y: 0 };
 const showDebugInfo = ref(false);
 
 // Load shop data on component mount
@@ -293,14 +315,6 @@ const loadMapData = async () => {
     const result = await response.json();
     if (result.success) {
       mapData.value = result.data;
-      // Log all shop coordinates when map loads
-      if (myShops.value.length > 0) {
-        console.log('=== Map Loaded - All Shop Coordinates ===');
-        myShops.value.forEach(shop => {
-          console.log(`${shop.shopName}: Server Coords (${shop.x}, ${shop.y})`);
-        });
-        console.log('==========================================');
-      }
     } else {
       console.error('Failed to load map:', result.error);
     }
@@ -319,6 +333,9 @@ const onMapImageLoad = () => {
       height: mapImageRef.value.clientHeight
     };
   }
+  drawGridOverlay();
+  // Center on marker when image ready
+  centerOnSelectedShop();
 };
 
 // Handle window resize to recalculate marker positions
@@ -327,7 +344,143 @@ const handleResize = () => {
     // Small delay to ensure the image has resized
     setTimeout(() => {
       onMapImageLoad();
+      drawGridOverlay();
     }, 100);
+  }
+};
+
+// Transform style for zoom/pan
+const getMapTransformStyle = () => {
+  return {
+    transform: `translate(${translate.value.x}px, ${translate.value.y}px) scale(${mapScale.value})`,
+    transformOrigin: '0 0'
+  };
+};
+
+// Wheel zoom (zoom around cursor)
+const onMapWheel = (e) => {
+  if (!mapContentRef.value) return;
+  const rect = mapContentRef.value.getBoundingClientRect();
+  const mouseX = e.clientX - rect.left;
+  const mouseY = e.clientY - rect.top;
+  const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+  const oldScale = mapScale.value;
+  const newScale = Math.min(maxScale, Math.max(minScale, oldScale * zoomFactor));
+  if (newScale === oldScale) return;
+  const k = newScale / oldScale;
+  translate.value = {
+    x: k * translate.value.x + (1 - k) * mouseX,
+    y: k * translate.value.y + (1 - k) * mouseY
+  };
+  mapScale.value = newScale;
+  drawGridOverlay();
+};
+
+// Mouse pan
+const onMapMouseDown = (e) => {
+  isPanning = true;
+  panStart = { x: e.clientX, y: e.clientY };
+  translateStart = { ...translate.value };
+  e.preventDefault();
+  e.stopPropagation();
+  window.addEventListener('mousemove', onMapMouseMove, { passive: false });
+  window.addEventListener('mouseup', onMapMouseUp, { passive: false });
+};
+
+const onMapMouseMove = (e) => {
+  if (!isPanning) return;
+  const dx = e.clientX - panStart.x;
+  const dy = e.clientY - panStart.y;
+  translate.value = { x: translateStart.x + dx, y: translateStart.y + dy };
+  drawGridOverlay();
+};
+
+const onMapMouseUp = () => {
+  isPanning = false;
+  window.removeEventListener('mousemove', onMapMouseMove);
+  window.removeEventListener('mouseup', onMapMouseUp);
+};
+
+// Controls
+const zoomIn = () => { onMapWheel({ clientX: 0, clientY: 0, deltaY: -1, preventDefault() {}, currentTarget: mapContentRef.value }); };
+const zoomOut = () => { onMapWheel({ clientX: 0, clientY: 0, deltaY: 1, preventDefault() {}, currentTarget: mapContentRef.value }); };
+const resetZoom = () => { mapScale.value = 1; translate.value = { x: 0, y: 0 }; drawGridOverlay(); };
+
+// Draw grid overlay on canvas
+const drawGridOverlay = () => {
+  if (!mapData.value || !gridCanvasRef.value || !mapImageSize.value.width) return;
+  const canvas = gridCanvasRef.value;
+  const ctx = canvas.getContext('2d');
+  const mapWidth = mapData.value.width || 4096;
+  const mapHeight = mapData.value.height || 4096;
+  const oceanMargin = mapData.value.oceanMargin || 0;
+  const gridCols = mapData.value.gridConfig?.gridCols || 32;
+  const gridRows = mapData.value.gridConfig?.gridRows || 32;
+  const displayWidth = mapImageSize.value.width;
+  const displayHeight = mapImageSize.value.height;
+  const dpr = window.devicePixelRatio || 1;
+  const zoom = mapScale.value || 1;
+  
+  // Resize canvas for HiDPI crispness
+  canvas.width = Math.floor(displayWidth * dpr * zoom);
+  canvas.height = Math.floor(displayHeight * dpr * zoom);
+  canvas.style.width = `${displayWidth}px`;
+  canvas.style.height = `${displayHeight}px`;
+  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, 0, 0);
+  
+  // Clear
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // Land area rectangle (excluding ocean margins)
+  const scaleX = displayWidth / mapWidth;
+  const scaleY = displayHeight / mapHeight;
+  const landOffsetX = oceanMargin * scaleX;
+  const landOffsetY = oceanMargin * scaleY;
+  const landWidthPx = (mapWidth - 2 * oceanMargin) * scaleX;
+  const landHeightPx = (mapHeight - 2 * oceanMargin) * scaleY;
+  const cellWidth = landWidthPx / gridCols;
+  const cellHeight = landHeightPx / gridRows;
+  
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+  ctx.lineWidth = 1 / dpr; // keep lines thin
+  for (let i = 0; i <= gridCols; i++) {
+    const x = landOffsetX + i * cellWidth;
+    ctx.beginPath();
+    ctx.moveTo(x, landOffsetY);
+    ctx.lineTo(x, landOffsetY + landHeightPx);
+    ctx.stroke();
+  }
+  for (let j = 0; j <= gridRows; j++) {
+    const y = landOffsetY + j * cellHeight;
+    ctx.beginPath();
+    ctx.moveTo(landOffsetX, y);
+    ctx.lineTo(landOffsetX + landWidthPx, y);
+    ctx.stroke();
+  }
+  
+  // Labels
+  const baseFontPx = 14; // slightly larger base size
+  const fontPx = Math.max(4, baseFontPx / zoom); // allow smaller labels
+  ctx.font = `bold ${fontPx}px Arial`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  for (let col = 0; col < gridCols; col++) {
+    for (let row = 0; row < gridRows; row++) {
+      let letter;
+      if (col < 26) {
+        letter = String.fromCharCode(65 + col);
+      } else {
+        const firstLetter = 'A';
+        const secondLetter = String.fromCharCode(65 + (col - 26));
+        letter = firstLetter + secondLetter;
+      }
+      const gridId = `${letter}${row}`;
+      const labelX = landOffsetX + col * cellWidth + Math.max(1, 2 / zoom);
+      const labelY = landOffsetY + row * cellHeight + Math.max(1, 2 / zoom);
+      ctx.fillStyle = '#000000';
+      ctx.fillText(gridId, labelX, labelY);
+    }
   }
 };
 
@@ -335,52 +488,24 @@ const handleResize = () => {
 const getMarkerPosition = (shop) => {
   if (!mapData.value || !shop || !mapImageSize.value.width) return {};
   
-  // Get the actual map dimensions from the map data
   const mapWidth = mapData.value.width || 4096;
   const mapHeight = mapData.value.height || 4096;
-  
-  // Get the displayed image dimensions
+  const oceanMargin = mapData.value.oceanMargin || 0;
+  const worldSize = mapData.value?.gridConfig?.worldSize || mapData.value?.worldSize;
+  if (!worldSize) return {};
   const displayWidth = mapImageSize.value.width;
   const displayHeight = mapImageSize.value.height;
+  const scaleX = displayWidth / mapWidth;
+  const scaleY = displayHeight / mapHeight;
+  const landOffsetX = oceanMargin * scaleX;
+  const landOffsetY = oceanMargin * scaleY;
+  const landWidthPx = (mapWidth - 2 * oceanMargin) * scaleX;
+  const landHeightPx = (mapHeight - 2 * oceanMargin) * scaleY;
   
-  // Rust uses a centered coordinate system where (0,0) is the center of the map
-  // The coordinate range depends on the map size
-  // Common Rust map coordinate ranges:
-  // - Small maps: -1500 to 1500 (3000x3000 total)
-  // - Large maps: -3000 to 3000 (6000x6000 total)  
-  // - Huge maps: -4000 to 4000 (8000x8000 total)
+  const x = landOffsetX + (shop.x / worldSize) * landWidthPx;
+  const y = landOffsetY + ((worldSize - shop.y) / worldSize) * landHeightPx;
   
-  // Let's try to detect the coordinate range
-  const coordRange = Math.max(Math.abs(shop.x), Math.abs(shop.y));
-  let mapCoordRange;
-  
-  if (coordRange <= 1500) {
-    mapCoordRange = 3000; // Small map
-  } else if (coordRange <= 3000) {
-    mapCoordRange = 6000; // Large map
-  } else {
-    mapCoordRange = 8000; // Huge map
-  }
-  
-  // Convert from Rust centered coordinate system to normalized (0 to 1)
-  // Rust coordinates: -mapCoordRange to +mapCoordRange
-  // Normalized coordinates: 0 to 1
-  const normalizedX = (shop.x + mapCoordRange) / (mapCoordRange * 2);
-  
-  // For Y-axis: Rust Y increases going north (positive Y = north)
-  // Image Y increases going down (positive Y = south)
-  // So we need to flip the Y coordinate
-  const normalizedY = 1 - ((shop.y + mapCoordRange) / (mapCoordRange * 2));
-  
-  // Ensure coordinates are within bounds
-  const clampedX = Math.max(0, Math.min(1, normalizedX));
-  const clampedY = Math.max(0, Math.min(1, normalizedY));
-  
-  // Calculate final position on the displayed image
-  const x = clampedX * displayWidth;
-  const y = clampedY * displayHeight;
-  
-  console.log(`Map Marker - Shop: ${shop.shopName}, Server Coords: (${shop.x}, ${shop.y}), Display Position: (${x.toFixed(0)}, ${y.toFixed(0)})`);
+  // Removed debug log
 
   return {
     position: 'absolute',
@@ -389,6 +514,39 @@ const getMarkerPosition = (shop) => {
     transform: 'translate(-50%, -50%)', // Center the marker on the point
     zIndex: 1000
   };
+};
+
+// Get marker position in raw pixels (no style object), relative to untransformed image
+const getMarkerPixelPosition = (shop) => {
+  if (!mapData.value || !shop || !mapImageSize.value.width) return { x: 0, y: 0 };
+  const mapWidth = mapData.value.width || 4096;
+  const mapHeight = mapData.value.height || 4096;
+  const oceanMargin = mapData.value.oceanMargin || 0;
+  const worldSize = mapData.value?.gridConfig?.worldSize || mapData.value?.worldSize;
+  const displayWidth = mapImageSize.value.width;
+  const displayHeight = mapImageSize.value.height;
+  const scaleX = displayWidth / mapWidth;
+  const scaleY = displayHeight / mapHeight;
+  const landOffsetX = oceanMargin * scaleX;
+  const landOffsetY = oceanMargin * scaleY;
+  const landWidthPx = (mapWidth - 2 * oceanMargin) * scaleX;
+  const landHeightPx = (mapHeight - 2 * oceanMargin) * scaleY;
+  const x = landOffsetX + (shop.x / worldSize) * landWidthPx;
+  const y = landOffsetY + ((worldSize - shop.y) / worldSize) * landHeightPx;
+  return { x, y };
+};
+
+// Center the transformed map on the selected shop marker
+const centerOnSelectedShop = () => {
+  if (!selectedShop.value || !mapImageSize.value.width) return;
+  const { x, y } = getMarkerPixelPosition(selectedShop.value);
+  const containerW = mapImageSize.value.width;
+  const containerH = mapImageSize.value.height;
+  translate.value = {
+    x: containerW / 2 - x * mapScale.value,
+    y: containerH / 2 - y * mapScale.value
+  };
+  drawGridOverlay();
 };
 
 // Calculate responsive marker icon size based on map size
@@ -441,19 +599,23 @@ const getFinalPosition = (shop) => {
   return `${position.left}, ${position.top}`;
 };
 
-// Convert Rust coordinates to grid coordinates (like what you see in-game)
-const getGridCoordinates = (shop) => {
-  if (!shop) return 'N/A';
-  
-  // Rust grid system conversion
-  // The grid system appears to use a different scale than raw coordinates
-  // Based on the photos, we need to convert raw coordinates to grid coordinates
-  
-  // Common Rust grid conversion (this may need adjustment based on your specific map)
-  const gridX = Math.round(shop.x / 150) + 150; // Convert to grid X
-  const gridY = Math.round(shop.y / 150) + 150; // Convert to grid Y
-  
-  return `${gridX}, ${gridY}`;
+// Grid helpers based on server-provided gridConfig (worldSize, gridDiameter)
+const getGridLabel = (shop) => {
+  if (!shop || !mapData.value?.gridConfig) return 'N/A';
+  const { gridDiameter, worldSize } = mapData.value.gridConfig;
+  // Use the exact mapping you provided:
+  // First = convertNumberToLetter(shop.x / gridDiameter)
+  // Second = Math.floor((worldSize - shop.y) / gridDiameter)
+  const first = convertNumberToLetter(shop.x / gridDiameter);
+  const second = Math.floor((worldSize - shop.y) / gridDiameter);
+  return `${first}${second}`;
+};
+
+const convertNumberToLetter = (num) => {
+  const mod = num % 26;
+  let pow = (num / 26) | 0;
+  const out = mod ? String.fromCharCode(65 + mod) : (pow--, 'Z');
+  return pow ? 'A' + out : out;
 };
 
 // Cache helpers
@@ -876,6 +1038,7 @@ const getSortedShops = (shops) => {
 .map-container {
   position: relative;
   width: 100%;
+  overflow: hidden; /* prevent content overlapping the header */
 }
 
 .map-image-wrapper {
@@ -883,11 +1046,39 @@ const getSortedShops = (shops) => {
   width: 100%;
 }
 
+.grid-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.map-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  will-change: transform;
+}
+
+.zoom-controls {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 1002;
+}
+
 .map-image {
   max-width: 100%;
   height: auto;
   border-radius: 4px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .map-data-info {
@@ -919,10 +1110,10 @@ const getSortedShops = (shops) => {
   background-color: rgba(0, 0, 0, 0.8);
   padding: 2px 6px;
   border-radius: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 120px;
+  white-space: normal; /* allow wrapping */
+  overflow: visible;
+  text-overflow: clip;
+  max-width: none;
   text-align: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
   border: 1px solid rgba(255, 255, 255, 0.2);

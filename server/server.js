@@ -592,12 +592,23 @@ app.get('/api/rustplus/map', async (req, res) => {
       const jpgBuffer = mapData.map.jpgImage;
       const base64Image = jpgBuffer.toString('base64');
       const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+      const width = mapData.map.width;
+      const height = mapData.map.height;
+      const oceanMargin = mapData.map.oceanMargin;
+      const worldSize = ((width - 3000) + (oceanMargin * 2) + width);
       
       processedMapData = {
         image: dataUrl,
-        width: mapData.map.width,
-        height: mapData.map.height,
-        oceanMargin: mapData.map.oceanMargin,
+        width,
+        height,
+        oceanMargin,
+        worldSize,
+        gridConfig: {
+          worldSize,
+          gridDiameter: 150,
+          gridCols: 32,
+          gridRows: 32
+        },
         background: mapData.map.background,
         monuments: mapData.map.monuments
       };

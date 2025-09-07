@@ -36,7 +36,7 @@
 
           <!-- Your price row -->
           <div class="table-row your-price">
-            <div class="cell shop-name">{{ listing.allyShop.shopName }}</div>
+            <div class="cell shop-name" @click="openMap({ shopName: listing.allyShop.shopName, x: allyShopX(listing), y: allyShopY(listing) })">{{ listing.allyShop.shopName }}</div>
             <div class="cell sell-display">
               <div class="item-stack">
                 <img v-if="listing.itemImage" :src="listing.itemImage" @error="handleImageError" class="stack-icon" />
@@ -57,7 +57,7 @@
           <!-- Competitor rows -->
           <div v-for="enemy in listing.enemyShops" :key="enemy.shopId" 
                :class="['table-row', 'competitor-price', { 'not-undercutting': !enemy.isUndercutting }]">
-            <div class="cell shop-name">{{ enemy.shopName }}</div>
+            <div class="cell shop-name" @click="openMap({ shopName: enemy.shopName, x: enemyShopX(enemy), y: enemyShopY(enemy) })">{{ enemy.shopName }}</div>
             <div class="cell sell-display">
               <div class="item-stack">
                 <img v-if="listing.itemImage" :src="listing.itemImage" @error="handleImageError" class="stack-icon" />
@@ -140,7 +140,7 @@
           <!-- Competitor rows (if any) -->
           <div v-if="item.enemyShops && item.enemyShops.length > 0">
             <div v-for="enemy in item.enemyShops" :key="enemy.shopId" class="table-row competitor-price">
-              <div class="cell shop-name">{{ enemy.shopName }}</div>
+              <div class="cell shop-name" @click="openMap({ shopName: enemy.shopName, x: enemy.x, y: enemy.y })">{{ enemy.shopName }}</div>
               <div class="cell sell-display">
                 <div class="item-stack">
                   <img v-if="getItemImage(item)" :src="getItemImage(item)" @error="handleImageError" class="stack-icon" />
@@ -207,10 +207,12 @@
       </div>
                     </div>
           </div>
+  <MapModal v-model:visible="mapVisible" :shop="mapShop" />
 </template>
 
 <script setup>
 import { ref, onMounted, onBeforeUnmount } from 'vue';
+import MapModal from './MapModal.vue';
 import { io } from 'socket.io-client';
 import itemDatabaseService from '../services/itemDatabaseService.js';
 
@@ -222,6 +224,31 @@ const allItems = ref([]); // New state variable to hold all item listings
 const isLoading = ref(false);
 const lastUpdated = ref(null);
 const currencyCache = ref({}); // Cache for currency names
+
+// Map modal state
+const mapVisible = ref(false);
+const mapShop = ref(null);
+const openMap = (shop) => { mapShop.value = shop; mapVisible.value = true; };
+
+// Helpers to fetch ally shop coords from listing
+const allyShopX = (listing) => {
+  const shop = myShops.value.find(s => s.entid === listing.allyShop.shopId || s.shopName === listing.allyShop.shopName);
+  return shop ? shop.x : 0;
+};
+const allyShopY = (listing) => {
+  const shop = myShops.value.find(s => s.entid === listing.allyShop.shopId || s.shopName === listing.allyShop.shopName);
+  return shop ? shop.y : 0;
+};
+
+// Resolve enemy shop coords
+const enemyShopX = (enemy) => {
+  const shop = competitorShops.value.find(s => s.entid === enemy.shopId || s.shopName === enemy.shopName);
+  return shop ? shop.x : 0;
+};
+const enemyShopY = (enemy) => {
+  const shop = competitorShops.value.find(s => s.entid === enemy.shopId || s.shopName === enemy.shopName);
+  return shop ? shop.y : 0;
+};
 
 // Setup socket connection
 const socket = io(import.meta.env.PROD ? window.location.origin : 'http://localhost:3001');
@@ -914,6 +941,12 @@ function formatTime(date) {
   font-weight: 400;
   color: #B1ADB3;
   font-size: 0.9rem;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.shop-name:hover {
+  color: #A673B1;
 }
 
 .sell-display, .for-display {

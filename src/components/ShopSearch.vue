@@ -203,7 +203,7 @@
               
               <!-- Shop Column -->
               <td class="trade-cell">
-                <div class="shop-cell" @click="showMapModal(trade)">
+                <div class="shop-cell" @click="openMap(trade)">
                   <v-icon class="shop-icon">mdi-store</v-icon>
                   <span class="shop-name">{{ trade.shopName }}</span>
                 </div>
@@ -305,10 +305,12 @@
       </div>
     </div>
     </div>
+    <MapModal v-model:visible="mapVisible" :shop="mapShop" />
   </template>
   
   <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
+import MapModal from './MapModal.vue';
 import itemDatabaseService from '../services/itemDatabaseService.js';
 
 // State variables
@@ -616,11 +618,10 @@ const getVisiblePages = () => {
 };
 
 
-// Map modal functions (placeholder for now)
-const showMapModal = async (trade) => {
-  console.log('Show map for trade:', trade);
-  // TODO: Implement map modal
-};
+// duplicate import removed
+const mapVisible = ref(false);
+const mapShop = ref(null);
+const openMap = (trade) => { mapShop.value = { shopName: trade.shopName, x: trade.x, y: trade.y }; mapVisible.value = true; };
 
 // Helper functions
 const getItemName = (itemId) => itemCache.value[itemId] || `Item ${itemId}`;
