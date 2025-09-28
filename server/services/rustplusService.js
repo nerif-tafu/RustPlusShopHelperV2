@@ -15,6 +15,8 @@ let connectionStatus = {
 };
 // Configurable notification delay (ms)
 let undercutNotificationDelayMs = 1000; // default 1s
+// Persisted shop prefix to identify ally shops server-side (used for chat commands)
+let savedShopPrefix = '';
 
 function setUndercutNotificationDelay(seconds) {
   // clamp 0.5 - 5 seconds
@@ -24,6 +26,19 @@ function setUndercutNotificationDelay(seconds) {
 
 function getUndercutNotificationDelaySec() {
   return undercutNotificationDelayMs / 1000;
+}
+
+// Allow server routes to persist the user's shop prefix so chat commands can filter to ally shops
+function setShopPrefix(prefix) {
+  try {
+    savedShopPrefix = String(prefix || '').trim();
+  } catch {
+    savedShopPrefix = '';
+  }
+}
+
+function getShopPrefix() {
+  return savedShopPrefix;
 }
 
 // Track last announced undercuts to avoid duplicate notifications
@@ -1061,7 +1076,9 @@ module.exports = {
   refreshMapMarkers,
   isReady,
   setUndercutNotificationDelay,
-  getUndercutNotificationDelaySec
+  getUndercutNotificationDelaySec,
+  setShopPrefix,
+  getShopPrefix
 }; 
 
 // ===== Helpers for team messages =====
@@ -1181,10 +1198,15 @@ function buildOutOfStockSummaryLines() {
   try {
     const markers = connectionStatus.mapMarkers?.markers || [];
     const vms = markers.filter(m => m && (m.type === 3 || m.type === 'VendingMachine'));
+    // Filter to ally shops only if a prefix is configured
+    const prefix = (savedShopPrefix || '').toLowerCase();
+    const allyVms = prefix
+      ? vms.filter(vm => ((vm.name || vm.shopName || '') + '').toLowerCase().includes(prefix))
+      : [];
     const lines = ['Out of stock:'];
     let count = 0;
     const maxLines = 50;
-    for (const vm of vms) {
+    for (const vm of allyVms) {
       const shopLabel = vm.name || vm.shopName || `Shop ${vm.id}`;
       const sells = vm.sellOrders || vm.sell_orders || [];
       for (const so of sells) {

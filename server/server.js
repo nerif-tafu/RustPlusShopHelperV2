@@ -701,6 +701,9 @@ app.get('/api/rustplus/vendingMachines', async (req, res) => {
     // Transform all shops to the standardized format
     const transformedShops = rustplusService.transformVendingMachines(allShops);
     
+    // Persist prefix for server-side chat command filtering
+    try { rustplusService.setShopPrefix(prefix || ''); } catch {}
+
     // Categorize the transformed shops
     const allyShops = transformedShops.filter(shop => 
       shop.shopName && shop.shopName.toLowerCase().includes(prefix.toLowerCase())
